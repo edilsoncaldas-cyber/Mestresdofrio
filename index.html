@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -105,12 +104,12 @@
             { id: 'c5', nome: "Participante Cli 5", modalidade: "C" }
         ];
 
-        // USUÁRIOS PADRÃO (Com Perfis Diferentes)
+        // USUÁRIOS PADRÃO (Com Perfis e Modalidades Diferentes)
         const DEFAULT_USERS = [
-            { user: 'admin', pass: '123', role: 'admin' },
-            { user: 'j1', pass: '123', role: 'j1' },
-            { user: 'j2', pass: '123', role: 'j2' },
-            { user: 'apresentador', pass: '123', role: 'apresentador' }
+            { user: 'admin', pass: '123', role: 'admin', modality: 'ALL' },
+            { user: 'j1', pass: '123', role: 'j1', modality: 'R' },
+            { user: 'j2', pass: '123', role: 'j2', modality: 'C' },
+            { user: 'apresentador', pass: '123', role: 'apresentador', modality: 'ALL' }
         ];
 
         function App() {
@@ -127,7 +126,8 @@
             const [authMode, setAuthMode] = useState('login');
             const [authUser, setAuthUser] = useState('');
             const [authPass, setAuthPass] = useState('');
-            const [authRole, setAuthRole] = useState('admin'); // Usado no cadastro
+            const [authRole, setAuthRole] = useState('admin');
+            const [authModality, setAuthModality] = useState('R'); // Nova opção de modalidade para jurados
             const [authError, setAuthError] = useState('');
 
             // --- ESTADOS DA APLICAÇÃO ---
@@ -146,13 +146,16 @@
             const [avalJ2, setAvalJ2] = useState({});
             const [notaExtra, setNotaExtra] = useState(0);
 
-            // Ajusta View Inicial baseada no Perfil
+            // Ajusta View Inicial e trava a Modalidade baseada no Perfil
             useEffect(() => {
                 if (currentUser) {
                     if (currentUser.role === 'apresentador') {
                         setView('placar');
                     } else if (currentUser.role === 'j1' || currentUser.role === 'j2') {
                         setView('tablet');
+                        if (currentUser.modality && currentUser.modality !== 'ALL') {
+                            setFormMod(currentUser.modality);
+                        }
                     }
                 }
             }, [currentUser]);
@@ -161,7 +164,11 @@
             useEffect(() => {
                 const parts = participantes.filter(p => p.modalidade === formMod);
                 if(parts.length > 0) {
-                    setFormPart(parts[0].id);
+                    // Apenas define o participante inicial se o atual não pertencer à nova modalidade
+                    const currentPartBelongs = parts.find(p => p.id === formPart);
+                    if (!currentPartBelongs) {
+                        setFormPart(parts[0].id);
+                    }
                     setFormDupla('');
                     setAvalJ1({});
                     setAvalJ2({});
@@ -191,7 +198,14 @@
                     setAuthError('Este nome de usuário já existe.');
                     return;
                 }
-                const newUser = { user: authUser, pass: authPass, role: authRole };
+                
+                const newUser = { 
+                    user: authUser, 
+                    pass: authPass, 
+                    role: authRole,
+                    modality: (authRole === 'j1' || authRole === 'j2') ? authModality : 'ALL' 
+                };
+                
                 const newUsers = [...users, newUser];
                 setUsers(newUsers);
                 localStorage.setItem('mdf_users', JSON.stringify(newUsers));
@@ -450,21 +464,39 @@
                                     </div>
 
                                     {authMode === 'register' && (
-                                        <div>
-                                            <label className="block text-sm font-bold text-gray-700 mb-2">Perfil de Acesso</label>
-                                            <div className="relative group">
-                                                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
-                                                    <i data-lucide="shield" className="w-5 h-5"></i>
+                                        <>
+                                            <div>
+                                                <label className="block text-sm font-bold text-gray-700 mb-2">Perfil de Acesso</label>
+                                                <div className="relative group">
+                                                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
+                                                        <i data-lucide="shield" className="w-5 h-5"></i>
+                                                    </div>
+                                                    <select value={authRole} onChange={e => setAuthRole(e.target.value)} 
+                                                        className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-medium appearance-none cursor-pointer">
+                                                        <option value="admin">Administrador (Total)</option>
+                                                        <option value="j1">Jurado Elgin (J1)</option>
+                                                        <option value="j2">Jurado Técnico SENAI (J2)</option>
+                                                        <option value="apresentador">Apresentador (Placar)</option>
+                                                    </select>
                                                 </div>
-                                                <select value={authRole} onChange={e => setAuthRole(e.target.value)} 
-                                                    className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-medium appearance-none cursor-pointer">
-                                                    <option value="admin">Administrador (Total)</option>
-                                                    <option value="j1">Jurado Elgin (J1)</option>
-                                                    <option value="j2">Jurado Técnico SENAI (J2)</option>
-                                                    <option value="apresentador">Apresentador (Placar)</option>
-                                                </select>
                                             </div>
-                                        </div>
+
+                                            {(authRole === 'j1' || authRole === 'j2') && (
+                                                <div className="animate-fade-in">
+                                                    <label className="block text-sm font-bold text-gray-700 mb-2">Especialidade (Modalidade)</label>
+                                                    <div className="relative group">
+                                                        <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
+                                                            <i data-lucide="wrench" className="w-5 h-5"></i>
+                                                        </div>
+                                                        <select value={authModality} onChange={e => setAuthModality(e.target.value)} 
+                                                            className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-medium appearance-none cursor-pointer">
+                                                            <option value="R">Refrigeração</option>
+                                                            <option value="C">Ar Condicionado (Climatização)</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </>
                                     )}
 
                                     <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-4 rounded-xl shadow-lg hover:shadow-blue-500/30 transition-all transform active:scale-95 flex justify-center items-center text-lg mt-4">
@@ -574,6 +606,15 @@
             const isJ1 = currentUser.role === 'j1' || isAdmin;
             const isJ2 = currentUser.role === 'j2' || isAdmin;
 
+            // Define o texto do selo (Badge) do menu
+            const getRoleLabel = () => {
+                if (currentUser.role === 'admin') return "Administrador";
+                const modalidade = currentUser.modality === 'R' ? '(Refrigeração)' : currentUser.modality === 'C' ? '(Climatização)' : '';
+                if (currentUser.role === 'j1') return `Jurado Elgin ${modalidade}`;
+                if (currentUser.role === 'j2') return `Jurado SENAI ${modalidade}`;
+                return "";
+            }
+
             return (
                 <div className="min-h-screen flex flex-col md:flex-row">
                     {/* Menu Lateral */}
@@ -584,10 +625,8 @@
                             ) : (
                                 <h2 className="text-2xl font-black uppercase tracking-wider">Mestres<br/><span className="text-blue-400">do Frio</span></h2>
                             )}
-                            <div className="mt-3 bg-blue-600 text-xs font-bold px-3 py-1 rounded-full text-white uppercase tracking-wider">
-                                {currentUser.role === 'admin' && "Administrador"}
-                                {currentUser.role === 'j1' && "Jurado Elgin"}
-                                {currentUser.role === 'j2' && "Jurado SENAI"}
+                            <div className="mt-3 bg-blue-600 text-[10px] font-bold px-3 py-1 rounded-full text-white uppercase tracking-wider text-center leading-tight">
+                                {getRoleLabel()}
                             </div>
                         </div>
                         
@@ -630,10 +669,18 @@
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 border-b pb-8">
                                         <div>
                                             <label className="block text-sm font-bold text-gray-700 mb-2">Modalidade</label>
-                                            <select value={formMod} onChange={e => setFormMod(e.target.value)} className="w-full p-3 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none text-lg cursor-pointer">
+                                            <select 
+                                                value={formMod} 
+                                                onChange={e => setFormMod(e.target.value)} 
+                                                disabled={currentUser.role !== 'admin' && currentUser.modality !== 'ALL'}
+                                                className={`w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-lg cursor-pointer ${currentUser.role !== 'admin' && currentUser.modality !== 'ALL' ? 'bg-gray-200 text-gray-500' : 'bg-gray-50'}`}
+                                            >
                                                 <option value="R">Refrigeração</option>
                                                 <option value="C">Climatização</option>
                                             </select>
+                                            {currentUser.role !== 'admin' && currentUser.modality !== 'ALL' && (
+                                                <p className="text-xs text-orange-500 mt-1 font-bold">Travado na sua especialidade.</p>
+                                            )}
                                         </div>
                                         <div>
                                             <label className="block text-sm font-bold text-gray-700 mb-2">Prova</label>
