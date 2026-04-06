@@ -104,12 +104,12 @@
             { id: 'c5', nome: "Participante Cli 5", modalidade: "C" }
         ];
 
-        // USUÁRIOS PADRÃO (Com Perfis e Modalidades Diferentes)
+        // USUÁRIOS PADRÃO (Com Perfis, Modalidades e E-mails Diferentes)
         const DEFAULT_USERS = [
-            { user: 'admin', pass: '123', role: 'admin', modality: 'ALL' },
-            { user: 'j1', pass: '123', role: 'j1', modality: 'R' },
-            { user: 'j2', pass: '123', role: 'j2', modality: 'C' },
-            { user: 'apresentador', pass: '123', role: 'apresentador', modality: 'ALL' }
+            { user: 'admin', email: 'admin@mestresdofrio.com', pass: '123', role: 'admin', modality: 'ALL' },
+            { user: 'j1', email: 'jurado1@elgin.com.br', pass: '123', role: 'j1', modality: 'R' },
+            { user: 'j2', email: 'jurado2@senai.br', pass: '123', role: 'j2', modality: 'C' },
+            { user: 'apresentador', email: 'apresentador@tv.com', pass: '123', role: 'apresentador', modality: 'ALL' }
         ];
 
         function App() {
@@ -123,12 +123,19 @@
             // --- ESTADOS DE AUTENTICAÇÃO E PERFIL ---
             const [currentUser, setCurrentUser] = useState(() => JSON.parse(localStorage.getItem('mdf_current_user')) || null);
             const [users, setUsers] = useState(() => JSON.parse(localStorage.getItem('mdf_users')) || DEFAULT_USERS);
-            const [authMode, setAuthMode] = useState('login');
+            const [authMode, setAuthMode] = useState('login'); // 'login', 'register', 'forgot', 'reset'
             const [authUser, setAuthUser] = useState('');
+            const [authEmail, setAuthEmail] = useState('');
             const [authPass, setAuthPass] = useState('');
             const [authRole, setAuthRole] = useState('admin');
-            const [authModality, setAuthModality] = useState('R'); // Nova opção de modalidade para jurados
+            const [authModality, setAuthModality] = useState('R');
             const [authError, setAuthError] = useState('');
+            const [authSuccess, setAuthSuccess] = useState('');
+            
+            // Estados para Recuperação de Senha
+            const [resetCode, setResetCode] = useState('');
+            const [generatedCode, setGeneratedCode] = useState('');
+            const [targetUser, setTargetUser] = useState(null);
 
             // --- ESTADOS DA APLICAÇÃO ---
             const [view, setView] = useState('tablet');
@@ -164,7 +171,6 @@
             useEffect(() => {
                 const parts = participantes.filter(p => p.modalidade === formMod);
                 if(parts.length > 0) {
-                    // Apenas define o participante inicial se o atual não pertencer à nova modalidade
                     const currentPartBelongs = parts.find(p => p.id === formPart);
                     if (!currentPartBelongs) {
                         setFormPart(parts[0].id);
@@ -183,24 +189,31 @@
                     setCurrentUser(found);
                     localStorage.setItem('mdf_current_user', JSON.stringify(found));
                     setAuthError('');
+                    setAuthSuccess('');
                 } else {
                     setAuthError('Usuário ou senha incorretos.');
+                    setAuthSuccess('');
                 }
             };
 
             const handleRegister = (e) => {
                 e.preventDefault();
-                if(!authUser || !authPass) {
-                    setAuthError('Preencha todos os campos.');
+                if(!authUser || !authPass || !authEmail) {
+                    setAuthError('Preencha todos os campos obrigatórios.');
                     return;
                 }
                 if(users.find(u => u.user === authUser)) {
                     setAuthError('Este nome de usuário já existe.');
                     return;
                 }
+                if(users.find(u => u.email === authEmail)) {
+                    setAuthError('Este e-mail já está cadastrado.');
+                    return;
+                }
                 
                 const newUser = { 
-                    user: authUser, 
+                    user: authUser,
+                    email: authEmail, 
                     pass: authPass, 
                     role: authRole,
                     modality: (authRole === 'j1' || authRole === 'j2') ? authModality : 'ALL' 
@@ -220,7 +233,74 @@
                 localStorage.removeItem('mdf_current_user');
                 setAuthUser('');
                 setAuthPass('');
+                setAuthEmail('');
                 setView('tablet');
+                setAuthMode('login');
+                setAuthSuccess('');
+            };
+
+            // --- FUNÇÕES DE RECUPERAÇÃO DE SENHA ---
+            const handleForgotPassword = (e) => {
+                e.preventDefault();
+                if (!authEmail) {
+                    setAuthError('Digite o e-mail cadastrado.');
+                    return;
+                }
+
+                const foundUser = users.find(u => u.email === authEmail);
+                if (foundUser) {
+                    // Simula envio de e-mail gerando um código
+                    const code = Math.floor(100000 + Math.random() * 900000).toString();
+                    setGeneratedCode(code);
+                    setTargetUser(foundUser);
+                    setAuthMode('reset');
+                    setAuthError('');
+                    
+                    // Alerta simulando a caixa de entrada
+                    alert(`=== SIMULAÇÃO DE E-MAIL ===\n\nDestinatário: ${authEmail}\nAssunto: Recuperação de Senha - Mestres do Frio\n\nSeu código de recuperação é: ${code}\n\n===========================`);
+                } else {
+                    setAuthError('E-mail não encontrado no sistema.');
+                    setAuthSuccess('');
+                }
+            };
+
+            const handleResetPassword = (e) => {
+                e.preventDefault();
+                if (resetCode !== generatedCode) {
+                    setAuthError('Código de recuperação inválido.');
+                    return;
+                }
+                if (!authPass) {
+                    setAuthError('Digite a nova senha.');
+                    return;
+                }
+
+                // Atualiza a senha do usuário
+                const updatedUsers = users.map(u => {
+                    if (u.user === targetUser.user) {
+                        return { ...u, pass: authPass };
+                    }
+                    return u;
+                });
+
+                setUsers(updatedUsers);
+                localStorage.setItem('mdf_users', JSON.stringify(updatedUsers));
+                
+                setAuthMode('login');
+                setAuthPass('');
+                setAuthEmail('');
+                setResetCode('');
+                setTargetUser(null);
+                setAuthError('');
+                setAuthSuccess('Senha alterada com sucesso! Faça login com a nova senha.');
+            };
+
+            const switchAuthMode = (mode) => {
+                setAuthMode(mode);
+                setAuthError('');
+                setAuthSuccess('');
+                setAuthPass('');
+                setResetCode('');
             };
 
             // --- FUNÇÕES DA APLICAÇÃO ---
@@ -237,18 +317,15 @@
                     
                     if (index >= 0) {
                         const updated = [...prev];
-                        // Atualiza apenas a nota do jurado que está salvando
                         if (currentUser.role === 'j1') {
                             updated[index] = { ...updated[index], totalJ1 };
                         } else if (currentUser.role === 'j2') {
                             updated[index] = { ...updated[index], totalJ2 };
                         } else {
-                            // Admin sobreescreve tudo, inclusive extra
                             updated[index] = { ...updated[index], totalJ1, totalJ2, extra: extraPts, duplaId: dupla };
                         }
                         return updated;
                     } else {
-                        // Novo registro na prova
                         return [...prev, {
                             id: idBusca,
                             participanteId: formPart,
@@ -267,7 +344,6 @@
                 if (currentUser.role === 'admin') { setAvalJ1({}); setAvalJ2({}); setNotaExtra(0); setFormDupla(''); }
             };
 
-            // Download automático da planilha (agora em XLSX com listas suspensas)
             const handleBaixarModeloExcel = async () => {
                 if (!window.ExcelJS) {
                     alert("A biblioteca do Excel ainda está carregando. Tente novamente em instantes.");
@@ -277,7 +353,6 @@
                 const workbook = new window.ExcelJS.Workbook();
                 const worksheet = workbook.addWorksheet('Subcritérios');
 
-                // Cabeçalhos
                 worksheet.columns = [
                     { header: 'Ar condicionado ou Refrigeração', key: 'mod', width: 35 },
                     { header: 'Prova', key: 'prova', width: 15 },
@@ -286,17 +361,14 @@
                     { header: 'Pontuação por subcritério', key: 'pts', width: 25 }
                 ];
 
-                // Estiliza o cabeçalho
                 worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
                 worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
 
-                // Dados de exemplo
                 worksheet.addRow(["Refrigeração", "P1", "1. Procedimento técnico correto", "Desligou equipamento antes do manuseio", 5]);
                 worksheet.addRow(["Refrigeração", "P1", "1. Procedimento técnico correto", "Recolheu gás conforme norma", 15]);
                 worksheet.addRow(["Ar condicionado", "P1", "1. Procedimento técnico correto", "Verificação do manual de instalação", 10]);
                 worksheet.addRow(["Ar condicionado", "P1", "1. Procedimento técnico correto", "Adequação da tubulação", 10]);
 
-                // Aplica Lista Suspensa (Data Validation) até a linha 100
                 for (let i = 2; i <= 100; i++) {
                     worksheet.getCell(`A${i}`).dataValidation = {
                         type: 'list',
@@ -317,7 +389,6 @@
                     };
                 }
 
-                // Gera o arquivo Excel e faz o download
                 const buffer = await workbook.xlsx.writeBuffer();
                 const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                 const url = window.URL.createObjectURL(blob);
@@ -328,7 +399,6 @@
                 window.URL.revokeObjectURL(url);
             };
 
-            // Cálculo do Placar Atualizado: Somatório Simples
             const placarCalculado = useMemo(() => {
                 let placar = participantes.map(p => ({ ...p, total: 0 }));
                 
@@ -385,7 +455,7 @@
             };
 
             // ==========================================
-            // RENDER: TELA DE LOGIN / CADASTRO
+            // RENDER: TELA DE LOGIN / CADASTRO / RECUPERAÇÃO
             // ==========================================
             if (!currentUser) {
                 return (
@@ -395,7 +465,6 @@
                             <div className="absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-cyan-400 opacity-10 rounded-full blur-3xl pointer-events-none"></div>
                             
                             <div className="relative z-10 flex flex-col items-center">
-                                {/* O LOGO FOI MOVIDO PARA CIMA DO FORMULÁRIO. AQUI FICA UM ÍCONE DE DESTAQUE. */}
                                 <div className="mb-8 p-6 bg-white/10 backdrop-blur-sm rounded-3xl border border-white/20 shadow-2xl">
                                     <i data-lucide="snowflake" className="w-24 h-24 text-cyan-400 mx-auto mb-4 animate-pulse"></i>
                                     <h2 className="text-4xl font-black text-white uppercase tracking-widest drop-shadow-lg">
@@ -408,8 +477,7 @@
                             </div>
                         </div>
 
-                        <div className="w-full lg:w-1/2 flex flex-col justify-center p-8 sm:p-16 xl:p-24 bg-gray-50 relative">
-                            {/* O LOGO INSERIDO NO SISTEMA FICA AQUI, BEM ACIMA DOS CAMPOS */}
+                        <div className="w-full lg:w-1/2 flex flex-col justify-center p-8 sm:p-16 xl:p-24 bg-gray-50 relative overflow-y-auto">
                             <div className="text-center mb-10 w-full flex justify-center">
                                 {logoUrl ? (
                                     <img src={logoUrl} alt="Mestres do Frio Logo" className="max-h-32 object-contain drop-shadow-md" />
@@ -421,12 +489,18 @@
                             </div>
 
                             <div className="max-w-md w-full mx-auto">
-                                <div className="mb-10 text-center lg:text-left">
+                                <div className="mb-8 text-center lg:text-left">
                                     <h2 className="text-3xl font-extrabold text-gray-900 mb-3">
-                                        {authMode === 'login' ? 'Bem-vindo de volta!' : 'Crie sua conta'}
+                                        {authMode === 'login' && 'Bem-vindo de volta!'}
+                                        {authMode === 'register' && 'Crie sua conta'}
+                                        {authMode === 'forgot' && 'Recuperar Senha'}
+                                        {authMode === 'reset' && 'Criar Nova Senha'}
                                     </h2>
                                     <p className="text-gray-500 font-medium text-sm">
-                                        {authMode === 'login' ? 'Insira suas credenciais para acessar seu painel.' : 'Defina seus dados e seu perfil de acesso.'}
+                                        {authMode === 'login' && 'Insira suas credenciais para acessar seu painel.'}
+                                        {authMode === 'register' && 'Defina seus dados e seu perfil de acesso.'}
+                                        {authMode === 'forgot' && 'Insira o e-mail cadastrado para receber o código de recuperação.'}
+                                        {authMode === 'reset' && `Insira o código enviado para ${targetUser?.email} e sua nova senha.`}
                                     </p>
                                 </div>
 
@@ -436,76 +510,182 @@
                                         {authError}
                                     </div>
                                 )}
-
-                                <form onSubmit={authMode === 'login' ? handleLogin : handleRegister} className="space-y-5">
-                                    <div>
-                                        <label className="block text-sm font-bold text-gray-700 mb-2">Nome de Usuário</label>
-                                        <div className="relative group">
-                                            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
-                                                <i data-lucide="user" className="w-5 h-5"></i>
-                                            </div>
-                                            <input type="text" value={authUser} onChange={e => setAuthUser(e.target.value)} 
-                                                className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-medium" 
-                                                placeholder="ex: admin" required />
-                                        </div>
+                                
+                                {authSuccess && (
+                                    <div className="mb-6 p-4 bg-green-50 border-l-4 border-green-500 flex items-center text-green-700 text-sm font-medium rounded-r-md animate-pulse">
+                                        <i data-lucide="check-circle" className="w-5 h-5 mr-3 flex-shrink-0"></i>
+                                        {authSuccess}
                                     </div>
-                                    
-                                    <div>
-                                        <label className="block text-sm font-bold text-gray-700 mb-2">Senha de Acesso</label>
-                                        <div className="relative group">
-                                            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
-                                                <i data-lucide="lock" className="w-5 h-5"></i>
-                                            </div>
-                                            <input type="password" value={authPass} onChange={e => setAuthPass(e.target.value)} 
-                                                className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-medium" 
-                                                placeholder="ex: 123" required />
-                                        </div>
-                                    </div>
+                                )}
 
-                                    {authMode === 'register' && (
-                                        <>
-                                            <div>
-                                                <label className="block text-sm font-bold text-gray-700 mb-2">Perfil de Acesso</label>
+                                {/* FORMULÁRIO DE LOGIN */}
+                                {authMode === 'login' && (
+                                    <form onSubmit={handleLogin} className="space-y-5">
+                                        <div>
+                                            <label className="block text-sm font-bold text-gray-700 mb-2">Nome de Usuário</label>
+                                            <div className="relative group">
+                                                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
+                                                    <i data-lucide="user" className="w-5 h-5"></i>
+                                                </div>
+                                                <input type="text" value={authUser} onChange={e => setAuthUser(e.target.value)} 
+                                                    className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-medium" 
+                                                    placeholder="ex: admin" required />
+                                            </div>
+                                        </div>
+                                        
+                                        <div>
+                                            <div className="flex justify-between items-center mb-2">
+                                                <label className="block text-sm font-bold text-gray-700">Senha de Acesso</label>
+                                                <button type="button" onClick={() => switchAuthMode('forgot')} className="text-sm font-bold text-blue-600 hover:text-blue-800 transition-colors">
+                                                    Esqueci minha senha
+                                                </button>
+                                            </div>
+                                            <div className="relative group">
+                                                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
+                                                    <i data-lucide="lock" className="w-5 h-5"></i>
+                                                </div>
+                                                <input type="password" value={authPass} onChange={e => setAuthPass(e.target.value)} 
+                                                    className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-medium" 
+                                                    placeholder="Digite sua senha" required />
+                                            </div>
+                                        </div>
+
+                                        <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-4 rounded-xl shadow-lg hover:shadow-blue-500/30 transition-all transform active:scale-95 flex justify-center items-center text-lg mt-4">
+                                            <i data-lucide="log-in" className="w-5 h-5 mr-2"></i> Entrar no Sistema
+                                        </button>
+                                    </form>
+                                )}
+
+                                {/* FORMULÁRIO DE CADASTRO */}
+                                {authMode === 'register' && (
+                                    <form onSubmit={handleRegister} className="space-y-4">
+                                        <div>
+                                            <label className="block text-sm font-bold text-gray-700 mb-2">Nome de Usuário</label>
+                                            <div className="relative group">
+                                                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
+                                                    <i data-lucide="user" className="w-5 h-5"></i>
+                                                </div>
+                                                <input type="text" value={authUser} onChange={e => setAuthUser(e.target.value)} 
+                                                    className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-medium" 
+                                                    placeholder="Escolha um nome de usuário" required />
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-bold text-gray-700 mb-2">E-mail</label>
+                                            <div className="relative group">
+                                                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
+                                                    <i data-lucide="mail" className="w-5 h-5"></i>
+                                                </div>
+                                                <input type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} 
+                                                    className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-medium" 
+                                                    placeholder="Seu e-mail profissional" required />
+                                            </div>
+                                        </div>
+                                        
+                                        <div>
+                                            <label className="block text-sm font-bold text-gray-700 mb-2">Senha</label>
+                                            <div className="relative group">
+                                                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
+                                                    <i data-lucide="lock" className="w-5 h-5"></i>
+                                                </div>
+                                                <input type="password" value={authPass} onChange={e => setAuthPass(e.target.value)} 
+                                                    className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-medium" 
+                                                    placeholder="Crie uma senha forte" required />
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-bold text-gray-700 mb-2">Perfil de Acesso</label>
+                                            <div className="relative group">
+                                                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
+                                                    <i data-lucide="shield" className="w-5 h-5"></i>
+                                                </div>
+                                                <select value={authRole} onChange={e => setAuthRole(e.target.value)} 
+                                                    className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-medium appearance-none cursor-pointer">
+                                                    <option value="admin">Administrador (Total)</option>
+                                                    <option value="j1">Jurado Elgin (J1)</option>
+                                                    <option value="j2">Jurado Técnico SENAI (J2)</option>
+                                                    <option value="apresentador">Apresentador (Placar)</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        {(authRole === 'j1' || authRole === 'j2') && (
+                                            <div className="animate-fade-in">
+                                                <label className="block text-sm font-bold text-gray-700 mb-2">Especialidade (Modalidade)</label>
                                                 <div className="relative group">
                                                     <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
-                                                        <i data-lucide="shield" className="w-5 h-5"></i>
+                                                        <i data-lucide="wrench" className="w-5 h-5"></i>
                                                     </div>
-                                                    <select value={authRole} onChange={e => setAuthRole(e.target.value)} 
+                                                    <select value={authModality} onChange={e => setAuthModality(e.target.value)} 
                                                         className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-medium appearance-none cursor-pointer">
-                                                        <option value="admin">Administrador (Total)</option>
-                                                        <option value="j1">Jurado Elgin (J1)</option>
-                                                        <option value="j2">Jurado Técnico SENAI (J2)</option>
-                                                        <option value="apresentador">Apresentador (Placar)</option>
+                                                        <option value="R">Refrigeração</option>
+                                                        <option value="C">Ar Condicionado (Climatização)</option>
                                                     </select>
                                                 </div>
                                             </div>
-
-                                            {(authRole === 'j1' || authRole === 'j2') && (
-                                                <div className="animate-fade-in">
-                                                    <label className="block text-sm font-bold text-gray-700 mb-2">Especialidade (Modalidade)</label>
-                                                    <div className="relative group">
-                                                        <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
-                                                            <i data-lucide="wrench" className="w-5 h-5"></i>
-                                                        </div>
-                                                        <select value={authModality} onChange={e => setAuthModality(e.target.value)} 
-                                                            className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-medium appearance-none cursor-pointer">
-                                                            <option value="R">Refrigeração</option>
-                                                            <option value="C">Ar Condicionado (Climatização)</option>
-                                                        </select>
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </>
-                                    )}
-
-                                    <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-4 rounded-xl shadow-lg hover:shadow-blue-500/30 transition-all transform active:scale-95 flex justify-center items-center text-lg mt-4">
-                                        {authMode === 'login' ? (
-                                            <><i data-lucide="log-in" className="w-5 h-5 mr-2"></i> Entrar no Sistema</>
-                                        ) : (
-                                            <><i data-lucide="user-plus" className="w-5 h-5 mr-2"></i> Cadastrar Usuário</>
                                         )}
-                                    </button>
-                                </form>
+
+                                        <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-4 rounded-xl shadow-lg hover:shadow-blue-500/30 transition-all transform active:scale-95 flex justify-center items-center text-lg mt-4">
+                                            <i data-lucide="user-plus" className="w-5 h-5 mr-2"></i> Cadastrar Usuário
+                                        </button>
+                                    </form>
+                                )}
+
+                                {/* FORMULÁRIO DE ESQUECI A SENHA */}
+                                {authMode === 'forgot' && (
+                                    <form onSubmit={handleForgotPassword} className="space-y-5">
+                                        <div>
+                                            <label className="block text-sm font-bold text-gray-700 mb-2">E-mail Cadastrado</label>
+                                            <div className="relative group">
+                                                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
+                                                    <i data-lucide="mail" className="w-5 h-5"></i>
+                                                </div>
+                                                <input type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} 
+                                                    className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-medium" 
+                                                    placeholder="ex: admin@mestresdofrio.com" required />
+                                            </div>
+                                        </div>
+
+                                        <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-4 rounded-xl shadow-lg hover:shadow-blue-500/30 transition-all transform active:scale-95 flex justify-center items-center text-lg mt-4">
+                                            <i data-lucide="send" className="w-5 h-5 mr-2"></i> Enviar Código de Recuperação
+                                        </button>
+                                    </form>
+                                )}
+
+                                {/* FORMULÁRIO DE RESET DE SENHA */}
+                                {authMode === 'reset' && (
+                                    <form onSubmit={handleResetPassword} className="space-y-5">
+                                        <div>
+                                            <label className="block text-sm font-bold text-gray-700 mb-2">Código de Verificação (6 dígitos)</label>
+                                            <div className="relative group">
+                                                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
+                                                    <i data-lucide="key-round" className="w-5 h-5"></i>
+                                                </div>
+                                                <input type="text" value={resetCode} onChange={e => setResetCode(e.target.value)} maxLength="6"
+                                                    className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-bold tracking-widest text-center" 
+                                                    placeholder="000000" required />
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-bold text-gray-700 mb-2">Nova Senha</label>
+                                            <div className="relative group">
+                                                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
+                                                    <i data-lucide="lock" className="w-5 h-5"></i>
+                                                </div>
+                                                <input type="password" value={authPass} onChange={e => setAuthPass(e.target.value)} 
+                                                    className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-medium" 
+                                                    placeholder="Digite sua nova senha" required />
+                                            </div>
+                                        </div>
+
+                                        <button type="submit" className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-4 rounded-xl shadow-lg hover:shadow-green-500/30 transition-all transform active:scale-95 flex justify-center items-center text-lg mt-4">
+                                            <i data-lucide="check-circle" className="w-5 h-5 mr-2"></i> Confirmar Nova Senha
+                                        </button>
+                                    </form>
+                                )}
 
                                 <div className="mt-8">
                                     <div className="relative">
@@ -517,13 +697,14 @@
                                         </div>
                                     </div>
                                     
-                                    <div className="mt-6">
-                                        {authMode === 'login' ? (
-                                            <button onClick={() => {setAuthMode('register'); setAuthError('');}} className="w-full flex justify-center py-4 px-4 border-2 border-gray-200 rounded-xl shadow-sm text-sm font-bold text-gray-600 bg-white hover:bg-gray-50 hover:border-gray-300 transition-colors">
+                                    <div className="mt-6 flex flex-col space-y-3">
+                                        {authMode !== 'register' && (
+                                            <button onClick={() => switchAuthMode('register')} className="w-full flex justify-center py-3 px-4 border-2 border-gray-200 rounded-xl shadow-sm text-sm font-bold text-gray-600 bg-white hover:bg-gray-50 hover:border-gray-300 transition-colors">
                                                 Criar uma nova conta
                                             </button>
-                                        ) : (
-                                            <button onClick={() => {setAuthMode('login'); setAuthError('');}} className="w-full flex justify-center py-4 px-4 border-2 border-gray-200 rounded-xl shadow-sm text-sm font-bold text-gray-600 bg-white hover:bg-gray-50 hover:border-gray-300 transition-colors">
+                                        )}
+                                        {authMode !== 'login' && (
+                                            <button onClick={() => switchAuthMode('login')} className="w-full flex justify-center py-3 px-4 border-2 border-transparent rounded-xl text-sm font-bold text-blue-600 hover:text-blue-800 transition-colors">
                                                 Voltar para a tela de Login
                                             </button>
                                         )}
