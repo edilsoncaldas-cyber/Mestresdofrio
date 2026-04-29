@@ -15,7 +15,7 @@
     <!-- Babel para compilar JSX no navegador -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- ExcelJS para exportar .xlsx com listas suspensas -->
+    <!-- ExcelJS para exportar e ler .xlsx com listas suspensas -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
 
     <!-- Lucide Icons -->
@@ -42,7 +42,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect, useMemo, useRef } = React;
 
         // --- DADOS INICIAIS BASEADOS NO DOC ---
         const PROVAS = [
@@ -64,7 +64,7 @@
             { id: 'c5', nome: "5. Segurança e organização", max: 20 }
         ];
 
-        // SUB-CRITÉRIOS BASEADOS NO MODELO DA PLANILHA (SIM/NÃO)
+        // SUB-CRITÉRIOS PADRÕES
         const DEFAULT_SUBCRITERIOS = [
             // REFRIGERAÇÃO (R)
             { id: 'r_c1_1', mod: 'R', crit: 'c1', desc: 'Desligou equipamento antes do manuseio', pts: 5 },
@@ -137,11 +137,32 @@
             const [generatedCode, setGeneratedCode] = useState('');
             const [targetUser, setTargetUser] = useState(null);
 
-            // --- ESTADOS DA APLICAÇÃO ---
+            // --- ESTADOS DA APLICAÇÃO COM PERSISTÊNCIA (BANCO DE DADOS LOCAL) ---
             const [view, setView] = useState('tablet');
-            const [participantes, setParticipantes] = useState(PARTICIPANTES_INICIAIS);
-            const [notas, setNotas] = useState([]); // [{ id, participanteId, provaId, totalJ1, totalJ2, extra, duplaId }]
             const [logoUrl, setLogoUrl] = useState(() => localStorage.getItem('mdf_logo') || null);
+            
+            // Carrega participantes salvos ou iniciais
+            const [participantes, setParticipantes] = useState(() => {
+                const salvos = localStorage.getItem('mdf_participantes');
+                return salvos ? JSON.parse(salvos) : PARTICIPANTES_INICIAIS;
+            });
+            
+            // Carrega notas salvas (Para não perder dados se a energia cair)
+            const [notas, setNotas] = useState(() => {
+                const salvas = localStorage.getItem('mdf_notas');
+                return salvas ? JSON.parse(salvas) : [];
+            }); 
+            
+            // Carrega Subcritérios
+            const [subcriterios, setSubcriterios] = useState(() => {
+                const salvos = localStorage.getItem('mdf_subcriterios');
+                return salvos ? JSON.parse(salvos) : DEFAULT_SUBCRITERIOS;
+            });
+
+            // Referências para arquivos (Excel e Backup JSON)
+            const [arquivoExcel, setArquivoExcel] = useState(null);
+            const inputExcelRef = useRef(null);
+            const inputBackupRef = useRef(null);
 
             // Estado do Formulário de Lançamento (Tablet)
             const [formMod, setFormMod] = useState('R');
@@ -303,9 +324,9 @@
                 setResetCode('');
             };
 
-            // --- FUNÇÕES DA APLICAÇÃO ---
+            // --- FUNÇÕES DE BANCO DE DADOS LOCAL E LANÇAMENTO ---
             const handleSalvarNota = () => {
-                const subAtivos = DEFAULT_SUBCRITERIOS.filter(s => s.mod === formMod);
+                const subAtivos = subcriterios.filter(s => s.mod === formMod);
                 const totalJ1 = subAtivos.reduce((acc, sub) => acc + (avalJ1[sub.id] === true ? sub.pts : 0), 0);
                 const totalJ2 = subAtivos.reduce((acc, sub) => acc + (avalJ2[sub.id] === true ? sub.pts : 0), 0);
                 const extraPts = parseInt(notaExtra) || 0;
@@ -314,9 +335,9 @@
                 setNotas(prev => {
                     const idBusca = `${formProva}_${formPart}`;
                     const index = prev.findIndex(n => n.id === idBusca);
+                    let updated = [...prev];
                     
                     if (index >= 0) {
-                        const updated = [...prev];
                         if (currentUser.role === 'j1') {
                             updated[index] = { ...updated[index], totalJ1 };
                         } else if (currentUser.role === 'j2') {
@@ -324,9 +345,8 @@
                         } else {
                             updated[index] = { ...updated[index], totalJ1, totalJ2, extra: extraPts, duplaId: dupla };
                         }
-                        return updated;
                     } else {
-                        return [...prev, {
+                        updated.push({
                             id: idBusca,
                             participanteId: formPart,
                             provaId: formProva,
@@ -334,8 +354,11 @@
                             totalJ2: currentUser.role === 'j1' ? 0 : totalJ2,
                             extra: currentUser.role === 'admin' ? extraPts : 0,
                             duplaId: currentUser.role === 'admin' ? dupla : null
-                        }];
+                        });
                     }
+                    // SALVA NO BANCO DE DADOS LOCAL
+                    localStorage.setItem('mdf_notas', JSON.stringify(updated));
+                    return updated;
                 });
 
                 alert("Avaliação salva com sucesso!");
@@ -344,6 +367,72 @@
                 if (currentUser.role === 'admin') { setAvalJ1({}); setAvalJ2({}); setNotaExtra(0); setFormDupla(''); }
             };
 
+            const alterarNomeParticipante = (id, novoNome) => {
+                const novos = [...participantes];
+                const index = novos.findIndex(x => x.id === id);
+                novos[index].nome = novoNome;
+                setParticipantes(novos);
+                // SALVA NO BANCO DE DADOS LOCAL
+                localStorage.setItem('mdf_participantes', JSON.stringify(novos));
+            };
+
+            // --- SISTEMA DE BACKUP DE DADOS (ARQUIVO DE SEGURANÇA) ---
+            const exportarBackup = () => {
+                const dataDeHoje = new Date().toISOString().split('T')[0];
+                const backupData = {
+                    version: '1.0',
+                    data: dataDeHoje,
+                    participantes: participantes,
+                    notas: notas,
+                    users: users,
+                    subcriterios: subcriterios
+                    // Logo não é exportado no backup para evitar arquivos gigantes, apenas texto.
+                };
+
+                const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = `MestresDoFrio_Backup_${dataDeHoje}.json`;
+                link.click();
+                URL.revokeObjectURL(url);
+            };
+
+            const importarBackup = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        const importedData = JSON.parse(event.target.result);
+                        
+                        if (importedData.participantes && importedData.notas && importedData.users) {
+                            // Restaura os Estados
+                            setParticipantes(importedData.participantes);
+                            setNotas(importedData.notas);
+                            setUsers(importedData.users);
+                            if (importedData.subcriterios) setSubcriterios(importedData.subcriterios);
+
+                            // Restaura no LocalStorage
+                            localStorage.setItem('mdf_participantes', JSON.stringify(importedData.participantes));
+                            localStorage.setItem('mdf_notas', JSON.stringify(importedData.notas));
+                            localStorage.setItem('mdf_users', JSON.stringify(importedData.users));
+                            if (importedData.subcriterios) localStorage.setItem('mdf_subcriterios', JSON.stringify(importedData.subcriterios));
+
+                            alert("Backup restaurado com sucesso! Os dados e notas foram recuperados.");
+                            if (inputBackupRef.current) inputBackupRef.current.value = "";
+                        } else {
+                            alert("O arquivo selecionado não parece ser um backup válido do Mestres do Frio.");
+                        }
+                    } catch (error) {
+                        alert("Erro ao ler o arquivo de backup. Verifique se o arquivo não está corrompido.");
+                    }
+                };
+                reader.readAsText(file);
+            };
+
+            // Download automático da planilha
             const handleBaixarModeloExcel = async () => {
                 if (!window.ExcelJS) {
                     alert("A biblioteca do Excel ainda está carregando. Tente novamente em instantes.");
@@ -397,6 +486,69 @@
                 link.download = "Modelo_Subcriterios.xlsx";
                 link.click();
                 window.URL.revokeObjectURL(url);
+            };
+
+            // Processar Upload e Salvar Subcritérios na Plataforma
+            const handleSalvarPlanilhaUpload = async () => {
+                if (!arquivoExcel) {
+                    alert("Por favor, selecione um arquivo primeiro.");
+                    return;
+                }
+
+                try {
+                    const workbook = new window.ExcelJS.Workbook();
+                    const arrayBuffer = await arquivoExcel.arrayBuffer();
+                    await workbook.xlsx.load(arrayBuffer);
+                    const worksheet = workbook.worksheets[0];
+
+                    const novosSubcriterios = [];
+                    
+                    worksheet.eachRow((row, rowNumber) => {
+                        if (rowNumber > 1) {
+                            const modRaw = row.getCell(1).text;
+                            const critRaw = row.getCell(3).text;
+                            const desc = row.getCell(4).text;
+                            const pts = parseInt(row.getCell(5).value) || 0;
+
+                            let mod = '';
+                            if (modRaw.toLowerCase().includes('refrig')) mod = 'R';
+                            else if (modRaw.toLowerCase().includes('ar condicionado') || modRaw.toLowerCase().includes('climatiz')) mod = 'C';
+
+                            let crit = '';
+                            if (critRaw.startsWith('1')) crit = 'c1';
+                            else if (critRaw.startsWith('2')) crit = 'c2';
+                            else if (critRaw.startsWith('3')) crit = 'c3';
+                            else if (critRaw.startsWith('4')) crit = 'c4';
+                            else if (critRaw.startsWith('5')) crit = 'c5';
+
+                            if (mod && crit && desc && pts > 0) {
+                                novosSubcriterios.push({
+                                    id: `${mod.toLowerCase()}_${crit}_${rowNumber}`,
+                                    mod,
+                                    crit,
+                                    desc,
+                                    pts
+                                });
+                            }
+                        }
+                    });
+
+                    if (novosSubcriterios.length > 0) {
+                        setSubcriterios(novosSubcriterios);
+                        localStorage.setItem('mdf_subcriterios', JSON.stringify(novosSubcriterios));
+                        alert(`Sucesso! ${novosSubcriterios.length} subcritérios foram carregados e salvos no banco de dados local.`);
+                        
+                        setArquivoExcel(null);
+                        if (inputExcelRef.current) inputExcelRef.current.value = "";
+                        setAvalJ1({});
+                        setAvalJ2({});
+                    } else {
+                        alert("Nenhum dado válido encontrado na planilha. Verifique o formato.");
+                    }
+                } catch (error) {
+                    console.error(error);
+                    alert("Erro ao ler o arquivo. Certifique-se de que é um formato Excel (.xlsx) válido.");
+                }
             };
 
             const placarCalculado = useMemo(() => {
@@ -890,7 +1042,7 @@
                                                 </h3>
                                                 <div className="space-y-6">
                                                     {CRITERIOS.map(c => {
-                                                        const subs = DEFAULT_SUBCRITERIOS.filter(s => s.mod === formMod && s.crit === c.id);
+                                                        const subs = subcriterios.filter(s => s.mod === formMod && s.crit === c.id);
                                                         const totalCrit = subs.reduce((acc, s) => acc + (avalJ1[s.id] === true ? s.pts : 0), 0);
                                                         if(subs.length === 0) return null;
                                                         
@@ -937,7 +1089,7 @@
                                                 </h3>
                                                 <div className="space-y-6">
                                                     {CRITERIOS.map(c => {
-                                                        const subs = DEFAULT_SUBCRITERIOS.filter(s => s.mod === formMod && s.crit === c.id);
+                                                        const subs = subcriterios.filter(s => s.mod === formMod && s.crit === c.id);
                                                         const totalCrit = subs.reduce((acc, s) => acc + (avalJ2[s.id] === true ? s.pts : 0), 0);
                                                         if(subs.length === 0) return null;
 
@@ -1019,8 +1171,40 @@
                         {view === 'config' && isAdmin && (
                             <div className="max-w-4xl mx-auto">
                                 <header className="mb-8">
-                                    <h1 className="text-3xl font-bold text-gray-800">Configurações & Participantes</h1>
+                                    <h1 className="text-3xl font-bold text-gray-800">Configurações do Sistema</h1>
                                 </header>
+
+                                {/* NOVO BLOCO: BANCO DE DADOS E BACKUP */}
+                                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-8">
+                                    <h2 className="text-xl font-bold text-blue-900 mb-2 flex items-center">
+                                        <i data-lucide="database" className="w-5 h-5 mr-2 text-blue-600"></i> Banco de Dados & Backup
+                                    </h2>
+                                    <p className="text-gray-600 mb-6 text-sm">
+                                        As notas, nomes de participantes e planilhas são salvos automaticamente na memória deste dispositivo. Utilize o backup para garantir a segurança dos dados ou transferir para o telão.
+                                    </p>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        <div className="bg-blue-50 border border-blue-200 p-5 rounded-lg flex flex-col justify-between">
+                                            <div>
+                                                <h3 className="font-bold text-blue-800 mb-1">Exportar Backup</h3>
+                                                <p className="text-xs text-blue-600 mb-4">Gera um arquivo seguro contendo todos os participantes, notas, usuários e configurações lançadas até agora.</p>
+                                            </div>
+                                            <button onClick={exportarBackup} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded shadow transition flex items-center justify-center">
+                                                <i data-lucide="download-cloud" className="w-4 h-4 mr-2"></i> Baixar Arquivo (.json)
+                                            </button>
+                                        </div>
+
+                                        <div className="bg-green-50 border border-green-200 p-5 rounded-lg flex flex-col justify-between">
+                                            <div>
+                                                <h3 className="font-bold text-green-800 mb-1">Restaurar de um Backup</h3>
+                                                <p className="text-xs text-green-600 mb-4">Carregue um arquivo de backup para restaurar todas as notas e participantes perdidos neste dispositivo.</p>
+                                            </div>
+                                            <div className="flex flex-col gap-2">
+                                                <input type="file" accept=".json" ref={inputBackupRef} onChange={importarBackup} className="block w-full text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:font-bold file:bg-green-600 file:text-white hover:file:bg-green-700 cursor-pointer" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
 
                                 <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-8">
                                     <h2 className="text-xl font-bold text-gray-800 mb-2">Identidade Visual (Logo)</h2>
@@ -1046,12 +1230,7 @@
                                         </h2>
                                         {participantes.filter(p => p.modalidade === 'R').map((p, i) => (
                                             <input key={p.id} type="text" value={p.nome} 
-                                                onChange={e => {
-                                                    const novos = [...participantes];
-                                                    const index = novos.findIndex(x => x.id === p.id);
-                                                    novos[index].nome = e.target.value;
-                                                    setParticipantes(novos);
-                                                }}
+                                                onChange={e => alterarNomeParticipante(p.id, e.target.value)}
                                                 className="w-full mb-3 p-2 border rounded focus:ring-2 focus:ring-blue-400 outline-none bg-gray-50" placeholder={`Nome Participante ${i+1}`} />
                                         ))}
                                     </div>
@@ -1061,12 +1240,7 @@
                                         </h2>
                                         {participantes.filter(p => p.modalidade === 'C').map((p, i) => (
                                             <input key={p.id} type="text" value={p.nome} 
-                                                onChange={e => {
-                                                    const novos = [...participantes];
-                                                    const index = novos.findIndex(x => x.id === p.id);
-                                                    novos[index].nome = e.target.value;
-                                                    setParticipantes(novos);
-                                                }}
+                                                onChange={e => alterarNomeParticipante(p.id, e.target.value)}
                                                 className="w-full mb-3 p-2 border rounded focus:ring-2 focus:ring-orange-400 outline-none bg-gray-50" placeholder={`Nome Participante ${i+1}`} />
                                         ))}
                                     </div>
@@ -1094,8 +1268,24 @@
                                         </button>
                                     </div>
                                     <div className="mt-6 pt-6 border-t border-gray-100">
-                                        <label className="block text-sm font-medium text-gray-700 mb-2">Fazer upload de subcritérios preenchidos</label>
-                                        <input type="file" accept=".csv, .xlsx" className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-bold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer border p-2 rounded-lg" />
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">Fazer upload de subcritérios preenchidos (Excel .xlsx)</label>
+                                        <div className="flex flex-col sm:flex-row items-center gap-4">
+                                            <input 
+                                                type="file" 
+                                                accept=".xlsx" 
+                                                ref={inputExcelRef}
+                                                onChange={e => setArquivoExcel(e.target.files[0])}
+                                                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-bold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer border p-2 rounded-lg" 
+                                            />
+                                            <button 
+                                                onClick={handleSalvarPlanilhaUpload}
+                                                disabled={!arquivoExcel}
+                                                className={`w-full sm:w-auto whitespace-nowrap px-6 py-3 rounded-lg text-sm font-bold flex items-center justify-center shadow transition ${arquivoExcel ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}
+                                            >
+                                                <i data-lucide="upload-cloud" className="w-4 h-4 mr-2"></i> Salvar e Carregar
+                                            </button>
+                                        </div>
+                                        {arquivoExcel && <p className="text-xs text-green-600 mt-2 font-medium">Arquivo pronto: {arquivoExcel.name}. Clique no botão ao lado para carregar no sistema.</p>}
                                     </div>
                                 </div>
                             </div>
