@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mestres do Frio - Sistema de Pontuação</title>
+    <title>Mestres do Frio - Sistema de Pontuação (Cloud)</title>
     
     <!-- Tailwind CSS para Estilização -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -20,6 +20,26 @@
 
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Firebase Modules (Isolados do Babel para evitar erros de 'require') -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, onSnapshot, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        window.FB = {
+            initializeApp,
+            getAuth,
+            signInWithCustomToken,
+            signInAnonymously,
+            onAuthStateChanged,
+            getFirestore,
+            doc,
+            onSnapshot,
+            setDoc
+        };
+        window.dispatchEvent(new Event('firebase-modules-loaded'));
+    </script>
 
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; }
@@ -104,7 +124,7 @@
             { id: 'c5', nome: "Participante Cli 5", modalidade: "C" }
         ];
 
-        // USUÁRIOS PADRÃO (Com Perfis, Modalidades e E-mails Diferentes)
+        // USUÁRIOS PADRÃO
         const DEFAULT_USERS = [
             { user: 'admin', email: 'admin@mestresdofrio.com', pass: '123', role: 'admin', modality: 'ALL' },
             { user: 'j1', email: 'jurado1@elgin.com.br', pass: '123', role: 'j1', modality: 'R' },
@@ -113,17 +133,15 @@
         ];
 
         function App() {
-            // --- RENDERIZAÇÃO DE ÍCONES DO LUCIDE ---
-            useEffect(() => {
-                if (window.lucide) {
-                    window.lucide.createIcons();
-                }
-            });
-
+            // --- ESTADOS NUVEM & FIREBASE ---
+            const [fbReady, setFbReady] = useState(false);
+            const [dataLoaded, setDataLoaded] = useState(false);
+            const [db, setDb] = useState(null);
+            
             // --- ESTADOS DE AUTENTICAÇÃO E PERFIL ---
             const [currentUser, setCurrentUser] = useState(() => JSON.parse(localStorage.getItem('mdf_current_user')) || null);
-            const [users, setUsers] = useState(() => JSON.parse(localStorage.getItem('mdf_users')) || DEFAULT_USERS);
-            const [authMode, setAuthMode] = useState('login'); // 'login', 'register', 'forgot', 'reset'
+            const [users, setUsers] = useState(DEFAULT_USERS);
+            const [authMode, setAuthMode] = useState('login');
             const [authUser, setAuthUser] = useState('');
             const [authEmail, setAuthEmail] = useState('');
             const [authPass, setAuthPass] = useState('');
@@ -132,34 +150,18 @@
             const [authError, setAuthError] = useState('');
             const [authSuccess, setAuthSuccess] = useState('');
             
-            // Estados para Recuperação de Senha
             const [resetCode, setResetCode] = useState('');
             const [generatedCode, setGeneratedCode] = useState('');
             const [targetUser, setTargetUser] = useState(null);
 
-            // --- ESTADOS DA APLICAÇÃO COM PERSISTÊNCIA (BANCO DE DADOS LOCAL) ---
+            // --- ESTADOS DA APLICAÇÃO (Sincronizados na Nuvem) ---
             const [view, setView] = useState('tablet');
-            const [logoUrl, setLogoUrl] = useState(() => localStorage.getItem('mdf_logo') || null);
-            
-            // Carrega participantes salvos ou iniciais
-            const [participantes, setParticipantes] = useState(() => {
-                const salvos = localStorage.getItem('mdf_participantes');
-                return salvos ? JSON.parse(salvos) : PARTICIPANTES_INICIAIS;
-            });
-            
-            // Carrega notas salvas (Para não perder dados se a energia cair)
-            const [notas, setNotas] = useState(() => {
-                const salvas = localStorage.getItem('mdf_notas');
-                return salvas ? JSON.parse(salvas) : [];
-            }); 
-            
-            // Carrega Subcritérios
-            const [subcriterios, setSubcriterios] = useState(() => {
-                const salvos = localStorage.getItem('mdf_subcriterios');
-                return salvos ? JSON.parse(salvos) : DEFAULT_SUBCRITERIOS;
-            });
+            const [logoUrl, setLogoUrl] = useState(null);
+            const [participantes, setParticipantes] = useState(PARTICIPANTES_INICIAIS);
+            const [notas, setNotas] = useState([]);
+            const [subcriterios, setSubcriterios] = useState(DEFAULT_SUBCRITERIOS);
 
-            // Referências para arquivos (Excel e Backup JSON)
+            // Referências para arquivos
             const [arquivoExcel, setArquivoExcel] = useState(null);
             const inputExcelRef = useRef(null);
             const inputBackupRef = useRef(null);
@@ -174,9 +176,82 @@
             const [avalJ2, setAvalJ2] = useState({});
             const [notaExtra, setNotaExtra] = useState(0);
 
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'mestres-do-frio-db';
+
+            // --- 1. INICIALIZAÇÃO FIREBASE NUVEM ---
+            useEffect(() => {
+                const initFirebase = async () => {
+                    if (!window.FB) {
+                        await new Promise(resolve => window.addEventListener('firebase-modules-loaded', resolve, { once: true }));
+                    }
+
+                    try {
+                        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+                        const app = window.FB.initializeApp(firebaseConfig);
+                        const auth = window.FB.getAuth(app);
+                        const firestoreDb = window.FB.getFirestore(app);
+                        setDb(firestoreDb);
+
+                        // Auth anônima ou custom token para proteger os dados na nuvem
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await window.FB.signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await window.FB.signInAnonymously(auth);
+                        }
+
+                        window.FB.onAuthStateChanged(auth, (user) => {
+                            if(user) setFbReady(true);
+                        });
+                    } catch (e) {
+                        console.error("Erro ao iniciar Cloud Firebase:", e);
+                    }
+                };
+                initFirebase();
+            }, []);
+
+            // --- 2. SINCRONIZAÇÃO EM TEMPO REAL ---
+            useEffect(() => {
+                if (!fbReady || !db) return;
+                
+                const { doc, onSnapshot, setDoc } = window.FB;
+                const stateRef = doc(db, 'artifacts', appId, 'public', 'data', 'app_state', 'main');
+
+                const unsubscribe = onSnapshot(stateRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        if (data.participantes) setParticipantes(data.participantes);
+                        if (data.notas) setNotas(data.notas);
+                        if (data.users) setUsers(data.users);
+                        if (data.subcriterios) setSubcriterios(data.subcriterios);
+                        if (data.logoUrl !== undefined) setLogoUrl(data.logoUrl);
+                        setDataLoaded(true);
+                    } else {
+                        // Documento nuvem não existe, inicializando...
+                        setDoc(stateRef, {
+                            participantes: PARTICIPANTES_INICIAIS,
+                            notas: [],
+                            users: DEFAULT_USERS,
+                            subcriterios: DEFAULT_SUBCRITERIOS,
+                            logoUrl: null
+                        }, { merge: true }).then(() => setDataLoaded(true));
+                    }
+                }, (error) => {
+                    console.error("Erro sincronizando dados:", error);
+                });
+
+                return () => unsubscribe();
+            }, [fbReady, db]);
+
+            // --- RENDERIZAÇÃO DE ÍCONES DO LUCIDE ---
+            useEffect(() => {
+                if (window.lucide && dataLoaded) {
+                    window.lucide.createIcons();
+                }
+            });
+
             // Ajusta View Inicial e trava a Modalidade baseada no Perfil
             useEffect(() => {
-                if (currentUser) {
+                if (currentUser && dataLoaded) {
                     if (currentUser.role === 'apresentador') {
                         setView('placar');
                     } else if (currentUser.role === 'j1' || currentUser.role === 'j2') {
@@ -186,7 +261,7 @@
                         }
                     }
                 }
-            }, [currentUser]);
+            }, [currentUser, dataLoaded]);
 
             // Trocar primeiro participante ao trocar modalidade e resetar avaliações
             useEffect(() => {
@@ -201,6 +276,13 @@
                     setAvalJ2({});
                 }
             }, [formMod, participantes]);
+
+            // Função ajudante para salvar na Nuvem
+            const updateCloudState = async (updates) => {
+                if (!db || !window.FB) return;
+                const stateRef = window.FB.doc(db, 'artifacts', appId, 'public', 'data', 'app_state', 'main');
+                await window.FB.setDoc(stateRef, updates, { merge: true });
+            };
 
             // --- FUNÇÕES DE AUTENTICAÇÃO ---
             const handleLogin = (e) => {
@@ -217,7 +299,7 @@
                 }
             };
 
-            const handleRegister = (e) => {
+            const handleRegister = async (e) => {
                 e.preventDefault();
                 if(!authUser || !authPass || !authEmail) {
                     setAuthError('Preencha todos os campos obrigatórios.');
@@ -241,8 +323,9 @@
                 };
                 
                 const newUsers = [...users, newUser];
-                setUsers(newUsers);
-                localStorage.setItem('mdf_users', JSON.stringify(newUsers));
+                
+                // SALVA NA NUVEM
+                await updateCloudState({ users: newUsers });
                 
                 setCurrentUser(newUser);
                 localStorage.setItem('mdf_current_user', JSON.stringify(newUser));
@@ -270,14 +353,12 @@
 
                 const foundUser = users.find(u => u.email === authEmail);
                 if (foundUser) {
-                    // Simula envio de e-mail gerando um código
                     const code = Math.floor(100000 + Math.random() * 900000).toString();
                     setGeneratedCode(code);
                     setTargetUser(foundUser);
                     setAuthMode('reset');
                     setAuthError('');
                     
-                    // Alerta simulando a caixa de entrada
                     alert(`=== SIMULAÇÃO DE E-MAIL ===\n\nDestinatário: ${authEmail}\nAssunto: Recuperação de Senha - Mestres do Frio\n\nSeu código de recuperação é: ${code}\n\n===========================`);
                 } else {
                     setAuthError('E-mail não encontrado no sistema.');
@@ -285,7 +366,7 @@
                 }
             };
 
-            const handleResetPassword = (e) => {
+            const handleResetPassword = async (e) => {
                 e.preventDefault();
                 if (resetCode !== generatedCode) {
                     setAuthError('Código de recuperação inválido.');
@@ -296,16 +377,13 @@
                     return;
                 }
 
-                // Atualiza a senha do usuário
                 const updatedUsers = users.map(u => {
-                    if (u.user === targetUser.user) {
-                        return { ...u, pass: authPass };
-                    }
+                    if (u.user === targetUser.user) return { ...u, pass: authPass };
                     return u;
                 });
 
-                setUsers(updatedUsers);
-                localStorage.setItem('mdf_users', JSON.stringify(updatedUsers));
+                // SALVA NA NUVEM
+                await updateCloudState({ users: updatedUsers });
                 
                 setAuthMode('login');
                 setAuthPass('');
@@ -324,59 +402,58 @@
                 setResetCode('');
             };
 
-            // --- FUNÇÕES DE BANCO DE DADOS LOCAL E LANÇAMENTO ---
-            const handleSalvarNota = () => {
+            // --- FUNÇÕES DE NUVEM E LANÇAMENTO ---
+            const handleSalvarNota = async () => {
                 const subAtivos = subcriterios.filter(s => s.mod === formMod);
                 const totalJ1 = subAtivos.reduce((acc, sub) => acc + (avalJ1[sub.id] === true ? sub.pts : 0), 0);
                 const totalJ2 = subAtivos.reduce((acc, sub) => acc + (avalJ2[sub.id] === true ? sub.pts : 0), 0);
                 const extraPts = parseInt(notaExtra) || 0;
                 const dupla = formDupla || null;
 
-                setNotas(prev => {
-                    const idBusca = `${formProva}_${formPart}`;
-                    const index = prev.findIndex(n => n.id === idBusca);
-                    let updated = [...prev];
-                    
-                    if (index >= 0) {
-                        if (currentUser.role === 'j1') {
-                            updated[index] = { ...updated[index], totalJ1 };
-                        } else if (currentUser.role === 'j2') {
-                            updated[index] = { ...updated[index], totalJ2 };
-                        } else {
-                            updated[index] = { ...updated[index], totalJ1, totalJ2, extra: extraPts, duplaId: dupla };
-                        }
+                const idBusca = `${formProva}_${formPart}`;
+                const index = notas.findIndex(n => n.id === idBusca);
+                let updated = [...notas];
+                
+                if (index >= 0) {
+                    if (currentUser.role === 'j1') {
+                        updated[index] = { ...updated[index], totalJ1 };
+                    } else if (currentUser.role === 'j2') {
+                        updated[index] = { ...updated[index], totalJ2 };
                     } else {
-                        updated.push({
-                            id: idBusca,
-                            participanteId: formPart,
-                            provaId: formProva,
-                            totalJ1: currentUser.role === 'j2' ? 0 : totalJ1,
-                            totalJ2: currentUser.role === 'j1' ? 0 : totalJ2,
-                            extra: currentUser.role === 'admin' ? extraPts : 0,
-                            duplaId: currentUser.role === 'admin' ? dupla : null
-                        });
+                        updated[index] = { ...updated[index], totalJ1, totalJ2, extra: extraPts, duplaId: dupla };
                     }
-                    // SALVA NO BANCO DE DADOS LOCAL
-                    localStorage.setItem('mdf_notas', JSON.stringify(updated));
-                    return updated;
-                });
+                } else {
+                    updated.push({
+                        id: idBusca,
+                        participanteId: formPart,
+                        provaId: formProva,
+                        totalJ1: currentUser.role === 'j2' ? 0 : totalJ1,
+                        totalJ2: currentUser.role === 'j1' ? 0 : totalJ2,
+                        extra: currentUser.role === 'admin' ? extraPts : 0,
+                        duplaId: currentUser.role === 'admin' ? dupla : null
+                    });
+                }
 
-                alert("Avaliação salva com sucesso!");
+                // SALVA DIRETAMENTE NA NUVEM FIREBASE
+                await updateCloudState({ notas: updated });
+
+                alert("Avaliação salva com sucesso e sincronizada na nuvem!");
                 if (currentUser.role === 'j1') setAvalJ1({});
                 if (currentUser.role === 'j2') setAvalJ2({});
                 if (currentUser.role === 'admin') { setAvalJ1({}); setAvalJ2({}); setNotaExtra(0); setFormDupla(''); }
             };
 
-            const alterarNomeParticipante = (id, novoNome) => {
+            const alterarNomeParticipante = async (id, novoNome) => {
                 const novos = [...participantes];
                 const index = novos.findIndex(x => x.id === id);
                 novos[index].nome = novoNome;
+                
+                // Atualização otimista + nuvem
                 setParticipantes(novos);
-                // SALVA NO BANCO DE DADOS LOCAL
-                localStorage.setItem('mdf_participantes', JSON.stringify(novos));
+                await updateCloudState({ participantes: novos });
             };
 
-            // --- SISTEMA DE BACKUP DE DADOS (ARQUIVO DE SEGURANÇA) ---
+            // --- SISTEMA DE BACKUP DE DADOS (ARQUIVO DE SEGURANÇA EXTRA) ---
             const exportarBackup = () => {
                 const dataDeHoje = new Date().toISOString().split('T')[0];
                 const backupData = {
@@ -386,7 +463,6 @@
                     notas: notas,
                     users: users,
                     subcriterios: subcriterios
-                    // Logo não é exportado no backup para evitar arquivos gigantes, apenas texto.
                 };
 
                 const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: "application/json" });
@@ -403,24 +479,21 @@
                 if (!file) return;
 
                 const reader = new FileReader();
-                reader.onload = (event) => {
+                reader.onload = async (event) => {
                     try {
                         const importedData = JSON.parse(event.target.result);
                         
                         if (importedData.participantes && importedData.notas && importedData.users) {
-                            // Restaura os Estados
-                            setParticipantes(importedData.participantes);
-                            setNotas(importedData.notas);
-                            setUsers(importedData.users);
-                            if (importedData.subcriterios) setSubcriterios(importedData.subcriterios);
+                            
+                            // Envia tudo para a nuvem substituindo o estado atual
+                            await updateCloudState({
+                                participantes: importedData.participantes,
+                                notas: importedData.notas,
+                                users: importedData.users,
+                                subcriterios: importedData.subcriterios || DEFAULT_SUBCRITERIOS
+                            });
 
-                            // Restaura no LocalStorage
-                            localStorage.setItem('mdf_participantes', JSON.stringify(importedData.participantes));
-                            localStorage.setItem('mdf_notas', JSON.stringify(importedData.notas));
-                            localStorage.setItem('mdf_users', JSON.stringify(importedData.users));
-                            if (importedData.subcriterios) localStorage.setItem('mdf_subcriterios', JSON.stringify(importedData.subcriterios));
-
-                            alert("Backup restaurado com sucesso! Os dados e notas foram recuperados.");
+                            alert("Backup restaurado e sincronizado com todos os dispositivos na nuvem!");
                             if (inputBackupRef.current) inputBackupRef.current.value = "";
                         } else {
                             alert("O arquivo selecionado não parece ser um backup válido do Mestres do Frio.");
@@ -432,7 +505,6 @@
                 reader.readAsText(file);
             };
 
-            // Download automático da planilha
             const handleBaixarModeloExcel = async () => {
                 if (!window.ExcelJS) {
                     alert("A biblioteca do Excel ainda está carregando. Tente novamente em instantes.");
@@ -464,13 +536,11 @@
                         allowBlank: true,
                         formulae: ['"Ar condicionado,Refrigeração"']
                     };
-                    
                     worksheet.getCell(`B${i}`).dataValidation = {
                         type: 'list',
                         allowBlank: true,
                         formulae: ['"P1,P2,P3,P4,P5,P6,P7,P8"']
                     };
-                    
                     worksheet.getCell(`C${i}`).dataValidation = {
                         type: 'list',
                         allowBlank: true,
@@ -488,7 +558,6 @@
                 window.URL.revokeObjectURL(url);
             };
 
-            // Processar Upload e Salvar Subcritérios na Plataforma
             const handleSalvarPlanilhaUpload = async () => {
                 if (!arquivoExcel) {
                     alert("Por favor, selecione um arquivo primeiro.");
@@ -534,10 +603,10 @@
                     });
 
                     if (novosSubcriterios.length > 0) {
-                        setSubcriterios(novosSubcriterios);
-                        localStorage.setItem('mdf_subcriterios', JSON.stringify(novosSubcriterios));
-                        alert(`Sucesso! ${novosSubcriterios.length} subcritérios foram carregados e salvos no banco de dados local.`);
+                        // Envia para a nuvem
+                        await updateCloudState({ subcriterios: novosSubcriterios });
                         
+                        alert(`Sucesso! ${novosSubcriterios.length} subcritérios foram carregados e sincronizados com a nuvem.`);
                         setArquivoExcel(null);
                         if (inputExcelRef.current) inputExcelRef.current.value = "";
                         setAvalJ1({});
@@ -593,18 +662,30 @@
                 const file = e.target.files[0];
                 if (file) {
                     const reader = new FileReader();
-                    reader.onloadend = () => {
-                        setLogoUrl(reader.result);
-                        localStorage.setItem('mdf_logo', reader.result);
+                    reader.onloadend = async () => {
+                        const logoStr = reader.result;
+                        await updateCloudState({ logoUrl: logoStr });
                     };
                     reader.readAsDataURL(file);
                 }
             };
 
-            const removerLogo = () => {
-                setLogoUrl(null);
-                localStorage.removeItem('mdf_logo');
+            const removerLogo = async () => {
+                await updateCloudState({ logoUrl: null });
             };
+
+            // ==========================================
+            // RENDER: CARREGANDO DADOS DA NUVEM
+            // ==========================================
+            if (!dataLoaded) {
+                return (
+                    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-900 text-white font-sans">
+                        <i data-lucide="loader-2" className="w-16 h-16 animate-spin text-cyan-400 mb-6"></i>
+                        <h2 className="text-3xl font-black tracking-widest uppercase mb-2">Mestres <span className="text-cyan-400">do Frio</span></h2>
+                        <p className="text-slate-400 font-medium tracking-wide">Conectando ao banco de dados na nuvem...</p>
+                    </div>
+                );
+            }
 
             // ==========================================
             // RENDER: TELA DE LOGIN / CADASTRO / RECUPERAÇÃO
@@ -618,13 +699,13 @@
                             
                             <div className="relative z-10 flex flex-col items-center">
                                 <div className="mb-8 p-6 bg-white/10 backdrop-blur-sm rounded-3xl border border-white/20 shadow-2xl">
-                                    <i data-lucide="snowflake" className="w-24 h-24 text-cyan-400 mx-auto mb-4 animate-pulse"></i>
+                                    <i data-lucide="cloud-lightning" className="w-24 h-24 text-cyan-400 mx-auto mb-4 animate-pulse"></i>
                                     <h2 className="text-4xl font-black text-white uppercase tracking-widest drop-shadow-lg">
-                                        Real Time<br/><span className="text-cyan-400">Score</span>
+                                        Cloud<br/><span className="text-cyan-400">Score</span>
                                     </h2>
                                 </div>
                                 <p className="text-blue-100 text-xl font-medium max-w-md drop-shadow">
-                                    Sistema Oficial de Pontuação, Gestão de Provas e Projeção de Placar.
+                                    Sistema Oficial de Pontuação Sincronizado em Tempo Real.
                                 </p>
                             </div>
                         </div>
@@ -649,7 +730,7 @@
                                         {authMode === 'reset' && 'Criar Nova Senha'}
                                     </h2>
                                     <p className="text-gray-500 font-medium text-sm">
-                                        {authMode === 'login' && 'Insira suas credenciais para acessar seu painel.'}
+                                        {authMode === 'login' && 'Insira suas credenciais para acessar o painel na nuvem.'}
                                         {authMode === 'register' && 'Defina seus dados e seu perfil de acesso.'}
                                         {authMode === 'forgot' && 'Insira o e-mail cadastrado para receber o código de recuperação.'}
                                         {authMode === 'reset' && `Insira o código enviado para ${targetUser?.email} e sua nova senha.`}
@@ -1159,7 +1240,7 @@
 
                                     <div className="mt-8 pt-6 border-t border-gray-200">
                                         <button onClick={handleSalvarNota} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-5 px-6 rounded-xl text-xl shadow-lg transition transform active:scale-95 flex justify-center items-center">
-                                            <i data-lucide="check-circle" className="w-7 h-7 mr-3"></i>
+                                            <i data-lucide="cloud-upload" className="w-7 h-7 mr-3"></i>
                                             SALVAR NOTAS (PROVA {formProva})
                                         </button>
                                     </div>
@@ -1175,29 +1256,35 @@
                                 </header>
 
                                 {/* NOVO BLOCO: BANCO DE DADOS E BACKUP */}
-                                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-8">
+                                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-8 relative overflow-hidden">
+                                    <div className="absolute top-0 right-0 p-4">
+                                        <div className="flex items-center text-green-500 text-sm font-bold">
+                                            <div className="w-2 h-2 rounded-full bg-green-500 animate-ping mr-2"></div> Online
+                                        </div>
+                                    </div>
+                                    
                                     <h2 className="text-xl font-bold text-blue-900 mb-2 flex items-center">
-                                        <i data-lucide="database" className="w-5 h-5 mr-2 text-blue-600"></i> Banco de Dados & Backup
+                                        <i data-lucide="cloud" className="w-5 h-5 mr-2 text-blue-600"></i> Banco de Dados na Nuvem (Ativo)
                                     </h2>
-                                    <p className="text-gray-600 mb-6 text-sm">
-                                        As notas, nomes de participantes e planilhas são salvos automaticamente na memória deste dispositivo. Utilize o backup para garantir a segurança dos dados ou transferir para o telão.
+                                    <p className="text-gray-600 mb-6 text-sm pr-16">
+                                        Todos os dados estão sendo sincronizados <strong>automaticamente e em tempo real</strong> em todos os dispositivos da produção. Utilize o backup abaixo apenas por questões de segurança.
                                     </p>
 
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                         <div className="bg-blue-50 border border-blue-200 p-5 rounded-lg flex flex-col justify-between">
                                             <div>
-                                                <h3 className="font-bold text-blue-800 mb-1">Exportar Backup</h3>
-                                                <p className="text-xs text-blue-600 mb-4">Gera um arquivo seguro contendo todos os participantes, notas, usuários e configurações lançadas até agora.</p>
+                                                <h3 className="font-bold text-blue-800 mb-1">Gerar Arquivo de Segurança</h3>
+                                                <p className="text-xs text-blue-600 mb-4">Gera um arquivo offline contendo todos os dados atuais em caso de emergência sem internet.</p>
                                             </div>
                                             <button onClick={exportarBackup} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded shadow transition flex items-center justify-center">
-                                                <i data-lucide="download-cloud" className="w-4 h-4 mr-2"></i> Baixar Arquivo (.json)
+                                                <i data-lucide="download-cloud" className="w-4 h-4 mr-2"></i> Baixar Backup (.json)
                                             </button>
                                         </div>
 
                                         <div className="bg-green-50 border border-green-200 p-5 rounded-lg flex flex-col justify-between">
                                             <div>
-                                                <h3 className="font-bold text-green-800 mb-1">Restaurar de um Backup</h3>
-                                                <p className="text-xs text-green-600 mb-4">Carregue um arquivo de backup para restaurar todas as notas e participantes perdidos neste dispositivo.</p>
+                                                <h3 className="font-bold text-green-800 mb-1">Restaurar para a Nuvem</h3>
+                                                <p className="text-xs text-green-600 mb-4">Atenção: Carregar um backup antigo substituirá as informações de todos os tablets instantaneamente.</p>
                                             </div>
                                             <div className="flex flex-col gap-2">
                                                 <input type="file" accept=".json" ref={inputBackupRef} onChange={importarBackup} className="block w-full text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:font-bold file:bg-green-600 file:text-white hover:file:bg-green-700 cursor-pointer" />
