@@ -154,12 +154,24 @@
             const [generatedCode, setGeneratedCode] = useState('');
             const [targetUser, setTargetUser] = useState(null);
 
-            // --- ESTADOS DA APLICAÇÃO (Sincronizados na Nuvem) ---
+            // --- ESTADOS DA APLICAÇÃO (Sincronizados na Nuvem ou Local) ---
             const [view, setView] = useState('tablet');
-            const [logoUrl, setLogoUrl] = useState(null);
-            const [participantes, setParticipantes] = useState(PARTICIPANTES_INICIAIS);
-            const [notas, setNotas] = useState([]);
-            const [subcriterios, setSubcriterios] = useState(DEFAULT_SUBCRITERIOS);
+            const [logoUrl, setLogoUrl] = useState(() => localStorage.getItem('mdf_logo') || null);
+            
+            const [participantes, setParticipantes] = useState(() => {
+                const salvos = localStorage.getItem('mdf_participantes');
+                return salvos ? JSON.parse(salvos) : PARTICIPANTES_INICIAIS;
+            });
+            
+            const [notas, setNotas] = useState(() => {
+                const salvas = localStorage.getItem('mdf_notas');
+                return salvas ? JSON.parse(salvas) : [];
+            }); 
+            
+            const [subcriterios, setSubcriterios] = useState(() => {
+                const salvos = localStorage.getItem('mdf_subcriterios');
+                return salvos ? JSON.parse(salvos) : DEFAULT_SUBCRITERIOS;
+            });
 
             // Referências para arquivos
             const [arquivoExcel, setArquivoExcel] = useState(null);
@@ -181,12 +193,19 @@
             // --- 1. INICIALIZAÇÃO FIREBASE NUVEM ---
             useEffect(() => {
                 const initFirebase = async () => {
+                    // Verifica se está rodando no GitHub ou Computador Local
+                    if (typeof __firebase_config === 'undefined' || !__firebase_config) {
+                        console.warn("Configurações de Nuvem não encontradas. Iniciando em Modo Local (GitHub/Offline).");
+                        setDataLoaded(true); // Pula a tela de carregamento na hora
+                        return;
+                    }
+
                     if (!window.FB) {
                         await new Promise(resolve => window.addEventListener('firebase-modules-loaded', resolve, { once: true }));
                     }
 
                     try {
-                        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+                        const firebaseConfig = JSON.parse(__firebase_config);
                         const app = window.FB.initializeApp(firebaseConfig);
                         const auth = window.FB.getAuth(app);
                         const firestoreDb = window.FB.getFirestore(app);
@@ -204,6 +223,8 @@
                         });
                     } catch (e) {
                         console.error("Erro ao iniciar Cloud Firebase:", e);
+                        // Caso falhe por permissões na nuvem, faz fallback para local:
+                        setDataLoaded(true);
                     }
                 };
                 initFirebase();
@@ -277,9 +298,18 @@
                 }
             }, [formMod, participantes]);
 
-            // Função ajudante para salvar na Nuvem
+            // Função ajudante para salvar na Nuvem e Local
             const updateCloudState = async (updates) => {
+                // Sempre salva no dispositivo como garantia e para o Modo Offline funcionar
+                if (updates.participantes) localStorage.setItem('mdf_participantes', JSON.stringify(updates.participantes));
+                if (updates.notas) localStorage.setItem('mdf_notas', JSON.stringify(updates.notas));
+                if (updates.users) localStorage.setItem('mdf_users', JSON.stringify(updates.users));
+                if (updates.subcriterios) localStorage.setItem('mdf_subcriterios', JSON.stringify(updates.subcriterios));
+                if (updates.logoUrl !== undefined) localStorage.setItem('mdf_logo', updates.logoUrl);
+
+                // Se não estiver conectado à nuvem, encerra a função aqui
                 if (!db || !window.FB) return;
+                
                 const stateRef = window.FB.doc(db, 'artifacts', appId, 'public', 'data', 'app_state', 'main');
                 await window.FB.setDoc(stateRef, updates, { merge: true });
             };
@@ -324,8 +354,9 @@
                 
                 const newUsers = [...users, newUser];
                 
-                // SALVA NA NUVEM
+                // SALVA NA NUVEM / LOCAL
                 await updateCloudState({ users: newUsers });
+                setUsers(newUsers);
                 
                 setCurrentUser(newUser);
                 localStorage.setItem('mdf_current_user', JSON.stringify(newUser));
@@ -382,8 +413,9 @@
                     return u;
                 });
 
-                // SALVA NA NUVEM
+                // SALVA NA NUVEM / LOCAL
                 await updateCloudState({ users: updatedUsers });
+                setUsers(updatedUsers);
                 
                 setAuthMode('login');
                 setAuthPass('');
@@ -434,10 +466,11 @@
                     });
                 }
 
-                // SALVA DIRETAMENTE NA NUVEM FIREBASE
+                // SALVA DIRETAMENTE NA NUVEM FIREBASE OU LOCAL
                 await updateCloudState({ notas: updated });
+                setNotas(updated); // Otimista
 
-                alert("Avaliação salva com sucesso e sincronizada na nuvem!");
+                alert("Avaliação salva com sucesso!");
                 if (currentUser.role === 'j1') setAvalJ1({});
                 if (currentUser.role === 'j2') setAvalJ2({});
                 if (currentUser.role === 'admin') { setAvalJ1({}); setAvalJ2({}); setNotaExtra(0); setFormDupla(''); }
@@ -448,7 +481,7 @@
                 const index = novos.findIndex(x => x.id === id);
                 novos[index].nome = novoNome;
                 
-                // Atualização otimista + nuvem
+                // Atualização otimista + nuvem/local
                 setParticipantes(novos);
                 await updateCloudState({ participantes: novos });
             };
@@ -485,15 +518,20 @@
                         
                         if (importedData.participantes && importedData.notas && importedData.users) {
                             
-                            // Envia tudo para a nuvem substituindo o estado atual
+                            // Envia tudo para a nuvem/local substituindo o estado atual
                             await updateCloudState({
                                 participantes: importedData.participantes,
                                 notas: importedData.notas,
                                 users: importedData.users,
                                 subcriterios: importedData.subcriterios || DEFAULT_SUBCRITERIOS
                             });
+                            
+                            setParticipantes(importedData.participantes);
+                            setNotas(importedData.notas);
+                            setUsers(importedData.users);
+                            if (importedData.subcriterios) setSubcriterios(importedData.subcriterios);
 
-                            alert("Backup restaurado e sincronizado com todos os dispositivos na nuvem!");
+                            alert("Backup restaurado e sincronizado com todos os dispositivos!");
                             if (inputBackupRef.current) inputBackupRef.current.value = "";
                         } else {
                             alert("O arquivo selecionado não parece ser um backup válido do Mestres do Frio.");
@@ -580,15 +618,15 @@
                             const pts = parseInt(row.getCell(5).value) || 0;
 
                             let mod = '';
-                            if (modRaw.toLowerCase().includes('refrig')) mod = 'R';
-                            else if (modRaw.toLowerCase().includes('ar condicionado') || modRaw.toLowerCase().includes('climatiz')) mod = 'C';
+                            if (modRaw && modRaw.toLowerCase().includes('refrig')) mod = 'R';
+                            else if (modRaw && (modRaw.toLowerCase().includes('ar condicionado') || modRaw.toLowerCase().includes('climatiz'))) mod = 'C';
 
                             let crit = '';
-                            if (critRaw.startsWith('1')) crit = 'c1';
-                            else if (critRaw.startsWith('2')) crit = 'c2';
-                            else if (critRaw.startsWith('3')) crit = 'c3';
-                            else if (critRaw.startsWith('4')) crit = 'c4';
-                            else if (critRaw.startsWith('5')) crit = 'c5';
+                            if (critRaw && critRaw.startsWith('1')) crit = 'c1';
+                            else if (critRaw && critRaw.startsWith('2')) crit = 'c2';
+                            else if (critRaw && critRaw.startsWith('3')) crit = 'c3';
+                            else if (critRaw && critRaw.startsWith('4')) crit = 'c4';
+                            else if (critRaw && critRaw.startsWith('5')) crit = 'c5';
 
                             if (mod && crit && desc && pts > 0) {
                                 novosSubcriterios.push({
@@ -605,8 +643,9 @@
                     if (novosSubcriterios.length > 0) {
                         // Envia para a nuvem
                         await updateCloudState({ subcriterios: novosSubcriterios });
+                        setSubcriterios(novosSubcriterios);
                         
-                        alert(`Sucesso! ${novosSubcriterios.length} subcritérios foram carregados e sincronizados com a nuvem.`);
+                        alert(`Sucesso! ${novosSubcriterios.length} subcritérios foram carregados e sincronizados com a nuvem/local.`);
                         setArquivoExcel(null);
                         if (inputExcelRef.current) inputExcelRef.current.value = "";
                         setAvalJ1({});
@@ -664,6 +703,7 @@
                     const reader = new FileReader();
                     reader.onloadend = async () => {
                         const logoStr = reader.result;
+                        setLogoUrl(logoStr);
                         await updateCloudState({ logoUrl: logoStr });
                     };
                     reader.readAsDataURL(file);
@@ -671,6 +711,7 @@
             };
 
             const removerLogo = async () => {
+                setLogoUrl(null);
                 await updateCloudState({ logoUrl: null });
             };
 
@@ -682,7 +723,7 @@
                     <div className="min-h-screen flex flex-col items-center justify-center bg-slate-900 text-white font-sans">
                         <i data-lucide="loader-2" className="w-16 h-16 animate-spin text-cyan-400 mb-6"></i>
                         <h2 className="text-3xl font-black tracking-widest uppercase mb-2">Mestres <span className="text-cyan-400">do Frio</span></h2>
-                        <p className="text-slate-400 font-medium tracking-wide">Conectando ao banco de dados na nuvem...</p>
+                        <p className="text-slate-400 font-medium tracking-wide">Conectando ao banco de dados...</p>
                     </div>
                 );
             }
