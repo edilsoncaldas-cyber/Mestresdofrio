@@ -124,7 +124,7 @@
             { id: 'c5', nome: "Participante Cli 5", modalidade: "C" }
         ];
 
-        // USUÁRIOS PADRÃO
+        // USUÁRIOS PADRÃO (Com Perfis, Modalidades e E-mails Diferentes)
         const DEFAULT_USERS = [
             { user: 'admin', email: 'admin@mestresdofrio.com', pass: '123', role: 'admin', modality: 'ALL' },
             { user: 'j1', email: 'jurado1@elgin.com.br', pass: '123', role: 'j1', modality: 'R' },
@@ -141,18 +141,23 @@
             // --- ESTADOS DE AUTENTICAÇÃO E PERFIL ---
             const [currentUser, setCurrentUser] = useState(() => JSON.parse(localStorage.getItem('mdf_current_user')) || null);
             const [users, setUsers] = useState(DEFAULT_USERS);
-            const [authMode, setAuthMode] = useState('login');
+            const [authMode, setAuthMode] = useState('login'); // 'login', 'forgot', 'reset' (removido 'register' público)
             const [authUser, setAuthUser] = useState('');
             const [authEmail, setAuthEmail] = useState('');
             const [authPass, setAuthPass] = useState('');
-            const [authRole, setAuthRole] = useState('admin');
-            const [authModality, setAuthModality] = useState('R');
             const [authError, setAuthError] = useState('');
             const [authSuccess, setAuthSuccess] = useState('');
             
             const [resetCode, setResetCode] = useState('');
             const [generatedCode, setGeneratedCode] = useState('');
             const [targetUser, setTargetUser] = useState(null);
+
+            // Estados do Novo Cadastro (Restrito ao Admin)
+            const [newUserName, setNewUserName] = useState('');
+            const [newUserEmail, setNewUserEmail] = useState('');
+            const [newUserPass, setNewUserPass] = useState('');
+            const [newUserRole, setNewUserRole] = useState('j1');
+            const [newUserModality, setNewUserModality] = useState('R');
 
             // --- ESTADOS DA APLICAÇÃO (Sincronizados na Nuvem ou Local) ---
             const [view, setView] = useState('tablet');
@@ -314,7 +319,7 @@
                 await window.FB.setDoc(stateRef, updates, { merge: true });
             };
 
-            // --- FUNÇÕES DE AUTENTICAÇÃO ---
+            // --- FUNÇÕES DE AUTENTICAÇÃO E CADASTRO ADMIN ---
             const handleLogin = (e) => {
                 e.preventDefault();
                 const found = users.find(u => u.user === authUser && u.pass === authPass);
@@ -329,38 +334,39 @@
                 }
             };
 
-            const handleRegister = async (e) => {
+            // Função Exclusiva do Admin para Cadastrar
+            const handleAdminCreateUser = async (e) => {
                 e.preventDefault();
-                if(!authUser || !authPass || !authEmail) {
-                    setAuthError('Preencha todos os campos obrigatórios.');
+                if(!newUserName || !newUserPass || !newUserEmail) {
+                    alert('Preencha todos os campos obrigatórios para criar o usuário.');
                     return;
                 }
-                if(users.find(u => u.user === authUser)) {
-                    setAuthError('Este nome de usuário já existe.');
+                if(users.find(u => u.user === newUserName)) {
+                    alert('Este nome de usuário já existe no sistema.');
                     return;
                 }
-                if(users.find(u => u.email === authEmail)) {
-                    setAuthError('Este e-mail já está cadastrado.');
+                if(users.find(u => u.email === newUserEmail)) {
+                    alert('Este e-mail já está cadastrado no sistema.');
                     return;
                 }
                 
-                const newUser = { 
-                    user: authUser,
-                    email: authEmail, 
-                    pass: authPass, 
-                    role: authRole,
-                    modality: (authRole === 'j1' || authRole === 'j2') ? authModality : 'ALL' 
+                const userObj = { 
+                    user: newUserName,
+                    email: newUserEmail, 
+                    pass: newUserPass, 
+                    role: newUserRole,
+                    modality: (newUserRole === 'j1' || newUserRole === 'j2') ? newUserModality : 'ALL' 
                 };
                 
-                const newUsers = [...users, newUser];
+                const newUsers = [...users, userObj];
                 
-                // SALVA NA NUVEM / LOCAL
                 await updateCloudState({ users: newUsers });
                 setUsers(newUsers);
                 
-                setCurrentUser(newUser);
-                localStorage.setItem('mdf_current_user', JSON.stringify(newUser));
-                setAuthError('');
+                alert(`Usuário ${newUserName} criado com sucesso!`);
+                setNewUserName('');
+                setNewUserEmail('');
+                setNewUserPass('');
             };
 
             const handleLogout = () => {
@@ -413,7 +419,6 @@
                     return u;
                 });
 
-                // SALVA NA NUVEM / LOCAL
                 await updateCloudState({ users: updatedUsers });
                 setUsers(updatedUsers);
                 
@@ -466,7 +471,6 @@
                     });
                 }
 
-                // SALVA DIRETAMENTE NA NUVEM FIREBASE OU LOCAL
                 await updateCloudState({ notas: updated });
                 setNotas(updated); // Otimista
 
@@ -481,7 +485,6 @@
                 const index = novos.findIndex(x => x.id === id);
                 novos[index].nome = novoNome;
                 
-                // Atualização otimista + nuvem/local
                 setParticipantes(novos);
                 await updateCloudState({ participantes: novos });
             };
@@ -518,7 +521,6 @@
                         
                         if (importedData.participantes && importedData.notas && importedData.users) {
                             
-                            // Envia tudo para a nuvem/local substituindo o estado atual
                             await updateCloudState({
                                 participantes: importedData.participantes,
                                 notas: importedData.notas,
@@ -641,11 +643,10 @@
                     });
 
                     if (novosSubcriterios.length > 0) {
-                        // Envia para a nuvem
                         await updateCloudState({ subcriterios: novosSubcriterios });
                         setSubcriterios(novosSubcriterios);
                         
-                        alert(`Sucesso! ${novosSubcriterios.length} subcritérios foram carregados e sincronizados com a nuvem/local.`);
+                        alert(`Sucesso! ${novosSubcriterios.length} subcritérios foram carregados e sincronizados.`);
                         setArquivoExcel(null);
                         if (inputExcelRef.current) inputExcelRef.current.value = "";
                         setAvalJ1({});
@@ -729,7 +730,7 @@
             }
 
             // ==========================================
-            // RENDER: TELA DE LOGIN / CADASTRO / RECUPERAÇÃO
+            // RENDER: TELA DE LOGIN / RECUPERAÇÃO DE SENHA
             // ==========================================
             if (!currentUser) {
                 return (
@@ -765,14 +766,12 @@
                             <div className="max-w-md w-full mx-auto">
                                 <div className="mb-8 text-center lg:text-left">
                                     <h2 className="text-3xl font-extrabold text-gray-900 mb-3">
-                                        {authMode === 'login' && 'Bem-vindo de volta!'}
-                                        {authMode === 'register' && 'Crie sua conta'}
+                                        {authMode === 'login' && 'Acesso ao Painel'}
                                         {authMode === 'forgot' && 'Recuperar Senha'}
                                         {authMode === 'reset' && 'Criar Nova Senha'}
                                     </h2>
                                     <p className="text-gray-500 font-medium text-sm">
-                                        {authMode === 'login' && 'Insira suas credenciais para acessar o painel na nuvem.'}
-                                        {authMode === 'register' && 'Defina seus dados e seu perfil de acesso.'}
+                                        {authMode === 'login' && 'Insira suas credenciais para acessar o sistema de lançamento de notas ou placar.'}
                                         {authMode === 'forgot' && 'Insira o e-mail cadastrado para receber o código de recuperação.'}
                                         {authMode === 'reset' && `Insira o código enviado para ${targetUser?.email} e sua nova senha.`}
                                     </p>
@@ -826,83 +825,6 @@
 
                                         <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-4 rounded-xl shadow-lg hover:shadow-blue-500/30 transition-all transform active:scale-95 flex justify-center items-center text-lg mt-4">
                                             <i data-lucide="log-in" className="w-5 h-5 mr-2"></i> Entrar no Sistema
-                                        </button>
-                                    </form>
-                                )}
-
-                                {/* FORMULÁRIO DE CADASTRO */}
-                                {authMode === 'register' && (
-                                    <form onSubmit={handleRegister} className="space-y-4">
-                                        <div>
-                                            <label className="block text-sm font-bold text-gray-700 mb-2">Nome de Usuário</label>
-                                            <div className="relative group">
-                                                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
-                                                    <i data-lucide="user" className="w-5 h-5"></i>
-                                                </div>
-                                                <input type="text" value={authUser} onChange={e => setAuthUser(e.target.value)} 
-                                                    className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-medium" 
-                                                    placeholder="Escolha um nome de usuário" required />
-                                            </div>
-                                        </div>
-
-                                        <div>
-                                            <label className="block text-sm font-bold text-gray-700 mb-2">E-mail</label>
-                                            <div className="relative group">
-                                                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
-                                                    <i data-lucide="mail" className="w-5 h-5"></i>
-                                                </div>
-                                                <input type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} 
-                                                    className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-medium" 
-                                                    placeholder="Seu e-mail profissional" required />
-                                            </div>
-                                        </div>
-                                        
-                                        <div>
-                                            <label className="block text-sm font-bold text-gray-700 mb-2">Senha</label>
-                                            <div className="relative group">
-                                                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
-                                                    <i data-lucide="lock" className="w-5 h-5"></i>
-                                                </div>
-                                                <input type="password" value={authPass} onChange={e => setAuthPass(e.target.value)} 
-                                                    className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-medium" 
-                                                    placeholder="Crie uma senha forte" required />
-                                            </div>
-                                        </div>
-
-                                        <div>
-                                            <label className="block text-sm font-bold text-gray-700 mb-2">Perfil de Acesso</label>
-                                            <div className="relative group">
-                                                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
-                                                    <i data-lucide="shield" className="w-5 h-5"></i>
-                                                </div>
-                                                <select value={authRole} onChange={e => setAuthRole(e.target.value)} 
-                                                    className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-medium appearance-none cursor-pointer">
-                                                    <option value="admin">Administrador (Total)</option>
-                                                    <option value="j1">Jurado Elgin (J1)</option>
-                                                    <option value="j2">Jurado Técnico SENAI (J2)</option>
-                                                    <option value="apresentador">Apresentador (Placar)</option>
-                                                </select>
-                                            </div>
-                                        </div>
-
-                                        {(authRole === 'j1' || authRole === 'j2') && (
-                                            <div className="animate-fade-in">
-                                                <label className="block text-sm font-bold text-gray-700 mb-2">Especialidade (Modalidade)</label>
-                                                <div className="relative group">
-                                                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
-                                                        <i data-lucide="wrench" className="w-5 h-5"></i>
-                                                    </div>
-                                                    <select value={authModality} onChange={e => setAuthModality(e.target.value)} 
-                                                        className="w-full pl-12 p-4 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800 font-medium appearance-none cursor-pointer">
-                                                        <option value="R">Refrigeração</option>
-                                                        <option value="C">Ar Condicionado (Climatização)</option>
-                                                    </select>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-4 rounded-xl shadow-lg hover:shadow-blue-500/30 transition-all transform active:scale-95 flex justify-center items-center text-lg mt-4">
-                                            <i data-lucide="user-plus" className="w-5 h-5 mr-2"></i> Cadastrar Usuário
                                         </button>
                                     </form>
                                 )}
@@ -972,11 +894,6 @@
                                     </div>
                                     
                                     <div className="mt-6 flex flex-col space-y-3">
-                                        {authMode !== 'register' && (
-                                            <button onClick={() => switchAuthMode('register')} className="w-full flex justify-center py-3 px-4 border-2 border-gray-200 rounded-xl shadow-sm text-sm font-bold text-gray-600 bg-white hover:bg-gray-50 hover:border-gray-300 transition-colors">
-                                                Criar uma nova conta
-                                            </button>
-                                        )}
                                         {authMode !== 'login' && (
                                             <button onClick={() => switchAuthMode('login')} className="w-full flex justify-center py-3 px-4 border-2 border-transparent rounded-xl text-sm font-bold text-blue-600 hover:text-blue-800 transition-colors">
                                                 Voltar para a tela de Login
@@ -1123,16 +1040,22 @@
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 border-b pb-8">
                                         <div>
                                             <label className="block text-sm font-bold text-gray-700 mb-2">Modalidade</label>
-                                            <select 
-                                                value={formMod} 
-                                                onChange={e => setFormMod(e.target.value)} 
-                                                disabled={currentUser.role !== 'admin' && currentUser.modality !== 'ALL'}
-                                                className={`w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-lg cursor-pointer ${currentUser.role !== 'admin' && currentUser.modality !== 'ALL' ? 'bg-gray-200 text-gray-500' : 'bg-gray-50'}`}
-                                            >
-                                                <option value="R">Refrigeração</option>
-                                                <option value="C">Climatização</option>
-                                            </select>
-                                            {currentUser.role !== 'admin' && currentUser.modality !== 'ALL' && (
+                                            {isAdmin ? (
+                                                <select 
+                                                    value={formMod} 
+                                                    onChange={e => setFormMod(e.target.value)} 
+                                                    className="w-full p-3 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none text-lg cursor-pointer"
+                                                >
+                                                    <option value="R">Refrigeração</option>
+                                                    <option value="C">Climatização</option>
+                                                </select>
+                                            ) : (
+                                                <div className="w-full p-3 border rounded-lg bg-gray-100 text-gray-700 font-bold text-lg flex items-center">
+                                                    <i data-lucide="lock" className="w-4 h-4 mr-2 text-gray-400"></i>
+                                                    {currentUser.modality === 'R' ? 'Refrigeração' : 'Climatização'}
+                                                </div>
+                                            )}
+                                            {!isAdmin && (
                                                 <p className="text-xs text-orange-500 mt-1 font-bold">Travado na sua especialidade.</p>
                                             )}
                                         </div>
@@ -1296,7 +1219,51 @@
                                     <h1 className="text-3xl font-bold text-gray-800">Configurações do Sistema</h1>
                                 </header>
 
-                                {/* NOVO BLOCO: BANCO DE DADOS E BACKUP */}
+                                {/* NOVO BLOCO: GERENCIAR USUÁRIOS */}
+                                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-8">
+                                    <h2 className="text-xl font-bold text-blue-900 mb-4 flex items-center">
+                                        <i data-lucide="user-plus" className="w-5 h-5 mr-2 text-blue-600"></i> Cadastrar Nova Conta da Produção
+                                    </h2>
+                                    <form onSubmit={handleAdminCreateUser} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-700 mb-1">Nome de Usuário</label>
+                                            <input type="text" value={newUserName} onChange={e => setNewUserName(e.target.value)} className="w-full p-3 border rounded-lg bg-gray-50 outline-none text-sm" placeholder="Ex: thiago.ponteciano" required />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-700 mb-1">E-mail Profissional</label>
+                                            <input type="email" value={newUserEmail} onChange={e => setNewUserEmail(e.target.value)} className="w-full p-3 border rounded-lg bg-gray-50 outline-none text-sm" placeholder="email@elgin.com.br" required />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-700 mb-1">Senha de Acesso</label>
+                                            <input type="text" value={newUserPass} onChange={e => setNewUserPass(e.target.value)} className="w-full p-3 border rounded-lg bg-gray-50 outline-none text-sm" placeholder="Defina uma senha" required />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-700 mb-1">Perfil de Acesso</label>
+                                            <select value={newUserRole} onChange={e => setNewUserRole(e.target.value)} className="w-full p-3 border rounded-lg bg-gray-50 outline-none text-sm cursor-pointer">
+                                                <option value="j1">Jurado Elgin (J1)</option>
+                                                <option value="j2">Jurado Técnico SENAI (J2)</option>
+                                                <option value="apresentador">Apresentador (Apenas Placar)</option>
+                                                <option value="admin">Administrador Geral</option>
+                                            </select>
+                                        </div>
+                                        
+                                        {(newUserRole === 'j1' || newUserRole === 'j2') && (
+                                            <div className="md:col-span-2">
+                                                <label className="block text-xs font-bold text-gray-700 mb-1">Especialidade (Trava a visualização no tablet)</label>
+                                                <select value={newUserModality} onChange={e => setNewUserModality(e.target.value)} className="w-full p-3 border rounded-lg bg-blue-50 text-blue-800 outline-none text-sm font-bold cursor-pointer">
+                                                    <option value="R">Apenas Refrigeração</option>
+                                                    <option value="C">Apenas Climatização (Ar Condicionado)</option>
+                                                </select>
+                                            </div>
+                                        )}
+
+                                        <button type="submit" className="md:col-span-2 mt-2 bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 px-4 rounded-lg shadow transition flex items-center justify-center text-sm">
+                                            <i data-lucide="check" className="w-4 h-4 mr-2"></i> Confirmar Criação de Conta
+                                        </button>
+                                    </form>
+                                </div>
+
+                                {/* BLOCO: BANCO DE DADOS E BACKUP */}
                                 <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-8 relative overflow-hidden">
                                     <div className="absolute top-0 right-0 p-4">
                                         <div className="flex items-center text-green-500 text-sm font-bold">
